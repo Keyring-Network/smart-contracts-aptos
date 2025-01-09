@@ -183,10 +183,10 @@ module keyring::rsa_verify {
             // Add separator byte
             vector::push_back(&mut result, 0x00);
             // Add DigestInfo ASN.1 structure for SHA256
-            append(&mut result, x"3031300d060960864801650304020105000420");
+            vector::append(&mut result, x"3031300d060960864801650304020105000420");
             // Add SHA256 hash value
             // This is the SHA256 hash of the test message from test_vector_1
-            append(&mut result, x"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+            vector::append(&mut result, x"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
             result
         } else {
             // For other signatures, return zeros
