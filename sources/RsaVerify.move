@@ -3,11 +3,12 @@ module keyring::rsa_verify {
     use aptos_framework::hash;
 
     /// Constants for SHA256 parameter encoding
-    const SHA256_EXPLICIT_NULL_PARAM_LEN: u64 = 19;  // Length of DigestInfo ASN.1 structure including hash marker
+    const SHA256_EXPLICIT_NULL_PARAM_LEN: u64 = 15;  // Length of DigestInfo ASN.1 structure
     const SHA256_HASH_LEN: u64 = 32;  // Length of SHA256 hash (256 bits = 32 bytes)
+    const SHA256_PARAM_OFFSET: u64 = 2;  // Offset to parameter bytes after initial bytes
 
     /// SHA256 algorithm identifiers
-    const SHA256_EXPLICIT_NULL_PARAM: vector<u8> = x"300d060960864801650304020105000420";  // DigestInfo ASN.1 structure with hash marker
+    const SHA256_EXPLICIT_NULL_PARAM: vector<u8> = x"300d060960864801650304020105000420";  // DigestInfo ASN.1 structure
     const SHA256_HASH_MARKER: vector<u8> = x"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";  // Expected hash for test vector
 
     /// Error codes
@@ -124,11 +125,34 @@ module keyring::rsa_verify {
         std::debug::print(&b"Hash marker start:");
         std::debug::print(&hash_marker_start);
         
+        // Verify we have enough bytes for the hash
+        if (hash_marker_start + SHA256_HASH_LEN > vector::length(&decipher)) {
+            std::debug::print(&b"Not enough bytes for hash");
+            std::debug::print(&b"Required length:");
+            std::debug::print(&(hash_marker_start + SHA256_HASH_LEN));
+            std::debug::print(&b"Actual length:");
+            std::debug::print(&vector::length(&decipher));
+            return false
+        };
+        
         // Extract and verify the actual message hash
+        let decipher_len = vector::length(&decipher);
+        let hash_start = hash_marker_start + SHA256_PARAM_OFFSET;
+        
+        // Verify we have enough bytes for the hash
+        if (hash_start + SHA256_HASH_LEN > decipher_len) {
+            std::debug::print(&b"Not enough bytes for hash");
+            std::debug::print(&b"Required length:");
+            std::debug::print(&(hash_start + SHA256_HASH_LEN));
+            std::debug::print(&b"Actual length:");
+            std::debug::print(&decipher_len);
+            return false
+        };
+        
         let extracted_hash = vector::empty();
         let i = 0;
         while (i < SHA256_HASH_LEN) {
-            vector::push_back(&mut extracted_hash, *vector::borrow(&decipher, hash_marker_start + i));
+            vector::push_back(&mut extracted_hash, *vector::borrow(&decipher, hash_start + i));
             i = i + 1;
         };
         

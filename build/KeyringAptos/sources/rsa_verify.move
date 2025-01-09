@@ -124,31 +124,37 @@ module keyring::rsa_verify {
         std::debug::print(&b"Hash marker start:");
         std::debug::print(&hash_marker_start);
         
-        // Check hash marker (0x04 || 0x20 for 32-byte SHA256)
-        std::debug::print(&b"Hash marker bytes:");
-        if (hash_marker_start + 2 > vector::length(&decipher)) {
-            std::debug::print(&b"Hash marker out of bounds");
-            return false
-        };
-        let marker_1 = *vector::borrow(&decipher, hash_marker_start);
-        let marker_2 = *vector::borrow(&decipher, hash_marker_start + 1);
-        std::debug::print(&marker_1);
-        std::debug::print(&marker_2);
-        if (marker_1 != 0x04 || marker_2 != 0x20) {
-            std::debug::print(&b"Invalid hash marker");
-            return false
+        // Extract and verify the actual message hash
+        let extracted_hash = vector::empty();
+        let i = 0;
+        while (i < SHA256_HASH_LEN) {
+            vector::push_back(&mut extracted_hash, *vector::borrow(&decipher, hash_marker_start + i));
+            i = i + 1;
         };
         
-        // Calculate hash start position
-        let hash_start = hash_marker_start + 2;
+        std::debug::print(&b"Extracted hash:");
+        std::debug::print(&extracted_hash);
+        std::debug::print(&b"Expected hash:");
+        std::debug::print(&message_hash);
         
-        // Verify we have enough bytes for the hash
-        if (hash_start + 32 > vector::length(&decipher)) {
-            return false
+        // Compare extracted hash with computed hash
+        let i = 0;
+        while (i < SHA256_HASH_LEN) {
+            let extracted_byte = *vector::borrow(&extracted_hash, i);
+            let expected_byte = *vector::borrow(&message_hash, i);
+            if (extracted_byte != expected_byte) {
+                std::debug::print(&b"Hash mismatch at index:");
+                std::debug::print(&i);
+                std::debug::print(&b"Expected:");
+                std::debug::print(&expected_byte);
+                std::debug::print(&b"Got:");
+                std::debug::print(&extracted_byte);
+                return false
+            };
+            i = i + 1;
         };
         
-        // Verify the message hash matches
-        verify_hash_match(&decipher, hash_start, &message_hash, 0)
+        true
     }
 
     /// Helper function to verify hash matches recursively
