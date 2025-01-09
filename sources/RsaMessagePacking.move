@@ -51,7 +51,7 @@ module keyring::rsa_message_packing {
         assert!(cost <= MAX_COST, error::invalid_argument(EINVALID_COST));
 
         // Create output vector
-        let result = vector::empty<u8>();
+        let mut result = vector::empty<u8>();
 
         // Add trading address (20 bytes) in big-endian format
         // Convert address to bytes (32 bytes) and take first 20 bytes

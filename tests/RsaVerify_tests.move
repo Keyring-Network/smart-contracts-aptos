@@ -1,7 +1,6 @@
 #[test_only]
 module keyring::rsa_verify_tests {
     use std::vector;
-    use std::debug;
     use keyring::rsa_verify;
     use keyring::rsa_message_packing;
 
@@ -36,10 +35,10 @@ module keyring::rsa_verify_tests {
         // Test vector with maximum values for fields
         TestVector {
             trading_address: @0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF,
-            policy_id: 0xFFFFFF as u64, // Max 24 bits
-            create_before: 0xFFFFFFFF as u64, // Max 32 bits
-            valid_until: 0xFFFFFFFF as u64, // Max 32 bits
-            cost: 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF as u128, // Max 128 bits
+            policy_id: 16777215u64, // Max 24 bits (0xFFFFFF)
+            create_before: 4294967295u64, // Max 32 bits (0xFFFFFFFF)
+            valid_until: 4294967295u64, // Max 32 bits (0xFFFFFFFF)
+            cost: 340282366920938463463374607431768211455u128, // Max 128 bits
             backdoor: x"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
             // Using same key/signature pair since we know it's valid
             key: x"ab067f172127a5f2611960c158f33de52ae940c7313d0c3ad95031d5a7a86142ea8f2500f4206d1c67087d4c60e0046c723f07aef45156d42f7155a461dcafb3cf3d2fa6b8cb77d8abecd834c9cf9769709414d85a5030f161e512981cf4534f3c6ea19286f08e53affa0155b5e9376efefb34a38bd8d8168bd0ba63542aa933",
