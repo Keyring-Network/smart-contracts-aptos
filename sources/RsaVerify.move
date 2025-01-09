@@ -238,7 +238,7 @@ module keyring::rsa_verify {
         let current_result = result;
         
         // Use smaller window size for better performance/memory tradeoff
-        let window_size = 2u64;
+        let window_size = 2u8;  // Use u8 for bit shift operations
         let max_power = 1u64 << window_size;
         
         // Precompute small table of powers
@@ -426,87 +426,73 @@ module keyring::rsa_verify {
         n0_inv: u64
     ): vector<u64> {
         let len = vector::length(n);
-        let t = vector::empty<u64>();
+        let mut t = vector::empty<u64>();
         
-        // Initialize t with zeros
-        {
-            let i = 0;
-            while (i < len + 1) {
-                vector::push_back(&mut t, 0);
-                i = i + 1;
-            };
+        // Pre-allocate result vector
+        let i = 0;
+        while (i < len + 1) {
+            vector::push_back(&mut t, 0);
+            i = i + 1;
         };
         
-        // Compute t = a*b and reduce one word at a time
-        {
-            let i = 0;
-            while (i < len) {
-                let a_i = *vector::borrow(a, i);
-                let carry1 = 0u64;
-                let carry2 = 0u64;
+        // Process one word at a time
+        let i = 0;
+        while (i < len) {
+            let a_i = *vector::borrow(a, i);
+            let mut carry = 0u64;
+            
+            // Compute a[i] * b + carry
+            let j = 0;
+            while (j < len) {
+                let b_j = *vector::borrow(b, j);
+                let t_j = *vector::borrow(&t, j);
                 
-                // Multiply and add to t
-                {
-                    let j = 0;
-                    while (j < len) {
-                        let b_j = *vector::borrow(b, j);
-                        let t_ij = *vector::borrow(&t, j);
-                        
-                        // First multiplication: t += a[i] * b[j]
-                        let (hi1, lo1) = mul_u64(a_i, b_j);
-                        let (sum1, c1) = add_u64(t_ij, lo1);
-                        let (sum2, c2) = add_u64(sum1, carry1);
-                        *vector::borrow_mut(&mut t, j) = sum2;
-                        let c1_val = if (c1) { 1u64 } else { 0u64 };
-                        let c2_val = if (c2) { 1u64 } else { 0u64 };
-                        carry1 = hi1 + c1_val + c2_val;
-                        j = j + 1;
-                    };
-                };
+                // Multiply and add
+                let (hi, lo) = mul_u64(a_i, b_j);
+                let (sum1, c1) = add_u64(t_j, lo);
+                let (sum2, c2) = add_u64(sum1, carry);
+                *vector::borrow_mut(&mut t, j) = sum2;
                 
-                // Add first carry
-                let (sum, _) = add_u64(*vector::borrow(&t, len), carry1);
-                *vector::borrow_mut(&mut t, len) = sum;
-                
-                // Compute m = t[0] * n0_inv mod 2^64
-                let m = (*vector::borrow(&t, 0) * n0_inv) & ((1u64 << 64) - 1);
-                
-                // Multiply and subtract n * m
-                {
-                    let j = 0;
-                    while (j < len) {
-                        let n_j = *vector::borrow(n, j);
-                        let t_j = *vector::borrow(&t, j);
-                        
-                        // Second multiplication: t -= n * m
-                        let (hi2, lo2) = mul_u64(m, n_j);
-                        let (diff, borrow) = sub_u64_with_borrow(t_j, lo2, carry2);
-                        *vector::borrow_mut(&mut t, j) = diff;
-                        let borrow_val = if (borrow) { 1u64 } else { 0u64 };
-                        carry2 = hi2 + borrow_val;
-                        j = j + 1;
-                    };
-                };
-                
-                // Subtract final carry
-                let (diff, _) = sub_u64_with_borrow(*vector::borrow(&t, len), carry2, 0);
-                *vector::borrow_mut(&mut t, len) = diff;
-                
-                // Shift right one word
-                {
-                    let j = 0;
-                    while (j < len) {
-                        *vector::borrow_mut(&mut t, j) = *vector::borrow(&t, j + 1);
-                        j = j + 1;
-                    };
-                };
-                *vector::borrow_mut(&mut t, len) = 0;
-                
-                i = i + 1;
+                carry = hi + (if (c1) { 1u64 } else { 0u64 }) + (if (c2) { 1u64 } else { 0u64 });
+                j = j + 1;
             };
+            
+            // Add final carry
+            *vector::borrow_mut(&mut t, len) = carry;
+            
+            // Compute quotient for reduction
+            let m = (*vector::borrow(&t, 0) * n0_inv) & ((1u64 << 64) - 1);
+            carry = 0;
+            
+            // Subtract m * n
+            let j = 0;
+            while (j < len) {
+                let n_j = *vector::borrow(n, j);
+                let t_j = *vector::borrow(&t, j);
+                
+                let (hi, lo) = mul_u64(m, n_j);
+                let (diff, borrow) = sub_u64_with_borrow(t_j, lo, carry);
+                *vector::borrow_mut(&mut t, j) = diff;
+                
+                carry = hi + (if (borrow) { 1u64 } else { 0u64 });
+                j = j + 1;
+            };
+            
+            // Subtract final carry and shift
+            let (diff, _) = sub_u64_with_borrow(*vector::borrow(&t, len), carry, 0);
+            
+            // Shift right one word
+            let j = 0;
+            while (j < len) {
+                *vector::borrow_mut(&mut t, j) = *vector::borrow(&t, j + 1);
+                j = j + 1;
+            };
+            *vector::borrow_mut(&mut t, len) = 0;
+            
+            i = i + 1;
         };
         
-        // Final reduction if needed
+        // Final reduction
         if (compare_limbs(&t, n) >= 0) {
             subtract_limbs(&mut t, n);
         };
