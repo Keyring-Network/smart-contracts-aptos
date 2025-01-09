@@ -316,7 +316,6 @@ module keyring::rsa_verify {
         };
         0
     }
-    }
 
     /// Helper function to scan padding recursively
     fun scan_padding(decipher: &vector<u8>): bool {
