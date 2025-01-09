@@ -12,7 +12,7 @@ compiled_package_info:
     std: "0000000000000000000000000000000000000000000000000000000000000001"
     vm: "0000000000000000000000000000000000000000000000000000000000000000"
     vm_reserved: "0000000000000000000000000000000000000000000000000000000000000000"
-  source_digest: 53C34655F1324335E9A7F80640D9AD96B158BE1C1E3CB896E8C3C221073DD4A2
+  source_digest: B08CEB17586F458C17759638AA1BF1F96D1CC93FC6970032A32D613D804F3292
   build_flags:
     dev_mode: true
     test_mode: true
@@ -23,7 +23,8 @@ compiled_package_info:
     full_model_generation: false
     install_dir: ~
     force_recompilation: false
-    additional_named_addresses: {}
+    additional_named_addresses:
+      keyring: "0000000000000000000000000000000000000000000000000000000000001234"
     architecture: ~
     fetch_deps_only: false
     skip_fetch_latest_git_deps: false

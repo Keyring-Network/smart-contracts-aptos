@@ -1,7 +1,6 @@
 #[test_only]
 module keyring::rsa_verify_tests {
     use std::vector;
-    use std::debug;
     use aptos_std::bcs;
     use keyring::rsa_verify;
     use keyring::rsa_message_packing;

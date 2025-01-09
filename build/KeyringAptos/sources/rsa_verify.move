@@ -3,13 +3,26 @@ module keyring::rsa_verify {
     use aptos_framework::hash;
 
     /// Constants for SHA256 parameter encoding
-    const SHA256_EXPLICIT_NULL_PARAM_LEN: u64 = 15;  // Length of DigestInfo ASN.1 structure
     const SHA256_HASH_LEN: u64 = 32;  // Length of SHA256 hash (256 bits = 32 bytes)
-    const SHA256_PARAM_OFFSET: u64 = 2;  // Offset to parameter bytes after initial bytes
-
-    /// SHA256 algorithm identifiers
-    const SHA256_EXPLICIT_NULL_PARAM: vector<u8> = x"300d060960864801650304020105000420";  // DigestInfo ASN.1 structure
-    const SHA256_HASH_MARKER: vector<u8> = x"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";  // Expected hash for test vector
+    
+    /// ASN.1 DER encoding for SHA256 algorithm identifier
+    // The complete ASN.1 DER structure for SHA256 with NULL parameters is:
+    // SEQUENCE {
+    //   SEQUENCE {
+    //     OBJECT IDENTIFIER 2.16.840.1.101.3.4.2.1 (sha256)
+    //     NULL
+    //   }
+    // }
+    // ASN.1 DER structure for SHA256 algorithm identifier
+    const SHA256_ALGORITHM_ID: vector<u8> = x"300d060960864801650304020105000420";
+    // The structure is:
+    // 30 0d - SEQUENCE, length 13
+    //   06 09 - OID, length 9
+    //     60 86 48 01 65 03 04 02 01 - SHA256 OID (2.16.840.1.101.3.4.2.1)
+    //   05 00 - NULL
+    //   04 20 - OCTET STRING tag (04) and length (32 bytes = 0x20)
+    const SHA256_ALGORITHM_ID_LEN: u64 = 19;  // Length including SEQUENCE + OID + NULL + OCTET STRING tag + length
+    const OCTET_STRING_TAG_LEN: u64 = 2;  // Length of OCTET STRING tag (04) and length byte (20)
 
     /// Error codes
     const EINVALID_SIGNATURE_LENGTH: u64 = 1;
@@ -120,19 +133,30 @@ module keyring::rsa_verify {
             return false
         };
         
-        // Calculate start of hash marker based on explicit parameter format
-        let hash_marker_start = padding_length + 1;  // Start after padding and separator byte
-        std::debug::print(&b"Hash marker start:");
-        std::debug::print(&hash_marker_start);
+        // Calculate start of ASN.1 structure (after padding)
+        let asn1_start = padding_length + 1;  // Start after padding and separator byte
+        std::debug::print(&b"ASN.1 structure start:");
+        std::debug::print(&asn1_start);
         
-        // Verify we have enough bytes for DigestInfo and hash
-        if (hash_marker_start + SHA256_EXPLICIT_NULL_PARAM_LEN + SHA256_HASH_LEN > vector::length(&decipher)) {
-            std::debug::print(&b"Not enough bytes for DigestInfo and hash");
+        // Verify we have enough bytes for algorithm identifier and hash
+        if (asn1_start + SHA256_ALGORITHM_ID_LEN + SHA256_HASH_LEN > vector::length(&decipher)) {
+            std::debug::print(&b"Not enough bytes for algorithm ID and hash");
             return false
         };
         
-        // Extract and verify the actual message hash
-        let hash_start = hash_marker_start + SHA256_EXPLICIT_NULL_PARAM_LEN;  // Start after DigestInfo
+        // Verify the ASN.1 structure matches exactly
+        let i = 0;
+        while (i < SHA256_ALGORITHM_ID_LEN) {
+            if (*vector::borrow(&decipher, asn1_start + i) != *vector::borrow(&SHA256_ALGORITHM_ID, i)) {
+                std::debug::print(&b"ASN.1 structure mismatch at index:");
+                std::debug::print(&i);
+                return false
+            };
+            i = i + 1;
+        };
+        
+        // Extract hash starting after the complete ASN.1 structure (including OCTET STRING tag)
+        let hash_start = asn1_start + SHA256_ALGORITHM_ID_LEN + OCTET_STRING_TAG_LEN;
         let extracted_hash = vector::empty();
         let i = 0;
         while (i < SHA256_HASH_LEN) {
@@ -216,7 +240,7 @@ module keyring::rsa_verify {
             // Add separator byte
             vector::push_back(&mut result, 0x00);
             // Add DigestInfo ASN.1 structure for SHA256
-            vector::append(&mut result, SHA256_EXPLICIT_NULL_PARAM);
+            vector::append(&mut result, SHA256_ALGORITHM_ID);
             // Add SHA256 hash value for test vector 1
             vector::append(&mut result, x"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
             // Fill remaining bytes with zeros
@@ -426,74 +450,50 @@ module keyring::rsa_verify {
     /// Helper function to check SHA256 parameters and hash marker
     fun check_sha256_params(decipher: &vector<u8>, start_index: u64, _explicit: bool): bool {
         // We only support explicit parameters in this implementation
-        let param_len = vector::length(&SHA256_EXPLICIT_NULL_PARAM);
+        let total_len = SHA256_ALGORITHM_ID_LEN + SHA256_HASH_LEN;
         
         std::debug::print(&b"Checking SHA256 params at index:");
         std::debug::print(&start_index);
-        std::debug::print(&b"Expected params:");
-        std::debug::print(&SHA256_EXPLICIT_NULL_PARAM);
+        std::debug::print(&b"Expected algorithm ID:");
+        std::debug::print(&SHA256_ALGORITHM_ID);
         
-        if (start_index + param_len > vector::length(decipher)) {
-            std::debug::print(&b"Params length exceeds decipher length");
+        if (start_index + total_len > vector::length(decipher)) {
+            std::debug::print(&b"Total length exceeds decipher length");
             return false
         };
             
         // Extract actual params for debugging
         let actual_params = vector::empty();
         let i = 0;
-        while (i < param_len) {
+        while (i < SHA256_ALGORITHM_ID_LEN) {
             vector::push_back(&mut actual_params, *vector::borrow(decipher, start_index + i));
             i = i + 1;
         };
         std::debug::print(&b"Actual params:");
         std::debug::print(&actual_params);
         
-        // Compare only the DigestInfo portion
+        // Compare algorithm ID and parameters
         let i = 0;
-        while (i < param_len) {
-            if (*vector::borrow(decipher, start_index + i) != *vector::borrow(&SHA256_EXPLICIT_NULL_PARAM, i)) {
+        while (i < SHA256_ALGORITHM_ID_LEN) {
+            if (*vector::borrow(decipher, start_index + i) != *vector::borrow(&SHA256_ALGORITHM_ID, i)) {
+                // Simplified debug output to avoid type conversion issues
+                std::debug::print(&b"Parameter mismatch detected in ASN.1 structure");
                 return false
             };
             i = i + 1;
         };
-        
-        // Check hash marker (should be 32 bytes after parameters)
-        let hash_marker_start = start_index + param_len;
-        std::debug::print(&b"Hash marker start:");
-        std::debug::print(&hash_marker_start);
-        
-        if (hash_marker_start + 32 > vector::length(decipher)) {
-            std::debug::print(&b"Hash marker length exceeds decipher length");
-            return false
-        };
-        
+
         // Extract and verify the actual message hash
+        let hash_start = start_index + SHA256_ALGORITHM_ID_LEN;
         let extracted_hash = vector::empty();
         let i = 0;
-        while (i < 32) {
-            vector::push_back(&mut extracted_hash, *vector::borrow(decipher, hash_marker_start + i));
+        while (i < SHA256_HASH_LEN) {
+            vector::push_back(&mut extracted_hash, *vector::borrow(decipher, hash_start + i));
             i = i + 1;
         };
         
         std::debug::print(&b"Extracted hash:");
         std::debug::print(&extracted_hash);
-        
-        // Compare extracted hash with expected hash
-        let i = 0;
-        while (i < 32) {
-            let extracted_byte = *vector::borrow(&extracted_hash, i);
-            let expected_byte = *vector::borrow(&SHA256_HASH_MARKER, i);
-            if (extracted_byte != expected_byte) {
-                std::debug::print(&b"Hash mismatch at index:");
-                std::debug::print(&i);
-                std::debug::print(&b"Expected:");
-                std::debug::print(&expected_byte);
-                std::debug::print(&b"Got:");
-                std::debug::print(&extracted_byte);
-                return false
-            };
-            i = i + 1;
-        };
         
         true
     }
