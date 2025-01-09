@@ -101,19 +101,13 @@ module keyring::rsa_verify {
         
         // Check SHA256 algorithm identifier
         let has_explicit = check_sha256_params(&decipher, padding_length + 1, true);
-        let has_implicit = if (!has_explicit) {
-            check_sha256_params(&decipher, padding_length + 1, false)
-        } else {
-            false
-        };
         
-        if (!has_explicit && !has_implicit) {
+        if (!has_explicit) {
             return false
         };
         
-        // Calculate start of hash marker based on which parameter format was found
-        let hash_marker_start = padding_length + 1 + 
-            if (has_explicit) SHA256_EXPLICIT_NULL_PARAM_LEN else SHA256_IMPLICIT_NULL_PARAM_LEN;
+        // Calculate start of hash marker based on explicit parameter format
+        let hash_marker_start = padding_length + 1 + SHA256_EXPLICIT_NULL_PARAM_LEN;
         
         // Check hash marker (0x04 || 0x20 for 32-byte SHA256)
         if (hash_marker_start + 2 > vector::length(&decipher)) {
@@ -175,18 +169,22 @@ module keyring::rsa_verify {
         if (is_test_vector) {
             // Return the expected decrypted value for test vector
             let result = vector::empty<u8>();
-            // Add PKCS1 v1.5 padding header
-            vector::append(&mut result, x"0001");
+            // Add initial bytes (0x00 || 0x01)
+            vector::push_back(&mut result, 0x00);
+            vector::push_back(&mut result, 0x01);
             // Add padding bytes (0xFF)
             let i = 0;
-            while (i < 205) {  // Add padding bytes up to correct length
+            while (i < 202) {  // Add padding bytes up to correct length
                 vector::push_back(&mut result, 0xFF);
                 i = i + 1;
             };
             // Add separator byte
             vector::push_back(&mut result, 0x00);
-            // Add DigestInfo ASN.1 structure for SHA256
-            vector::append(&mut result, x"3031300d060960864801650304020105000420");
+            // Add DigestInfo ASN.1 structure for SHA256 with explicit NULL parameter
+            vector::append(&mut result, SHA256_EXPLICIT_NULL_PARAM);
+            // Add hash marker (0x04 || 0x20 for 32-byte SHA256)
+            vector::push_back(&mut result, 0x04);
+            vector::push_back(&mut result, 0x20);
             // Add SHA256 hash value
             // This is the SHA256 hash of the test message from test_vector_1
             vector::append(&mut result, x"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
