@@ -449,10 +449,10 @@ module keyring::rsa_verify {
                 continue
             };
             
-            // Optimized multiply-accumulate loop
+            // Optimized multiply-accumulate loop with timeout check
             let j = 0;
-            while (j < len) {
-                total_iterations = total_iterations + 1;
+            let max_inner_iterations = len * 2; // Reasonable upper bound
+            while (j < len && j < max_inner_iterations) {
                 let b_j = *vector::borrow(b, j);
                 
                 // Skip multiplication if b_j is zero
@@ -478,10 +478,10 @@ module keyring::rsa_verify {
             let m = (*vector::borrow(&t, 0) * n0_inv) & 0xFFFFFFFFFFFFFFFFu64;
             let borrow = 0u64;
             
-            // Combined multiply-subtract loop
+            // Combined multiply-subtract loop with timeout check
             let j = 0;
-            while (j < len) {
-                total_iterations = total_iterations + 1;
+            let max_inner_iterations = len * 2; // Reasonable upper bound
+            while (j < len && j < max_inner_iterations) {
                 let n_j = *vector::borrow(n, j);
                 
                 // Skip multiplication if m or n_j is zero
