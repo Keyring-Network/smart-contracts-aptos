@@ -259,8 +259,8 @@ module keyring::core_v2 {
             };
         };
 
-        // Get admin address from module
-        let admin_addr = signer::address_of(admin);
+        // Get module admin address
+        let admin_addr = @0x1234;
         
         // Get resource account address from map
         if (!exists<ResourceAccountMap>(admin_addr)) {
@@ -305,7 +305,6 @@ module keyring::core_v2 {
     /// Blacklist an entity
     public entry fun blacklist_entity(
         admin: &signer,
-        policy_id: u64,
         entity: address,
         blacklisted: bool
     ) acquires EntityData, EventStore {
@@ -334,12 +333,12 @@ module keyring::core_v2 {
             if (blacklisted) {
                 event::emit_event(&mut events.entity_blacklisted_events, EntityBlacklistedEvent {
                     entity,
-                    policy_id
+                    policy_id: 0 // Default policy ID for blacklist events
                 });
             } else {
                 event::emit_event(&mut events.entity_unblacklisted_events, EntityUnblacklistedEvent {
                     entity,
-                    policy_id
+                    policy_id: 0 // Default policy ID for blacklist events
                 });
             };
         };

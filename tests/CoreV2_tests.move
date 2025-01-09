@@ -97,7 +97,7 @@ module keyring::core_v2_tests {
         core_v2::init_for_test(&admin);
         
         // Blacklist entity
-        core_v2::blacklist_entity(&admin, POLICY_ID, entity, true);
+        core_v2::blacklist_entity(&admin, entity, true);
         
         // Verify entity is blacklisted
         assert!(!core_v2::check_credential(
