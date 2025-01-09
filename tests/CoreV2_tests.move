@@ -1,6 +1,8 @@
 #[test_only]
 module keyring::core_v2_tests {
     use std::signer;
+    use std::bcs;
+    use std::vector;
     use aptos_framework::timestamp;
     use aptos_framework::account;
     // No debug import needed for assertions
@@ -39,6 +41,13 @@ module keyring::core_v2_tests {
         let admin = account::create_account_for_test(@0x1234);
         core_v2::init_for_test(&admin);
         
+        // Create resource account with unique seed
+        let seed = vector::empty<u8>();
+        vector::append(&mut seed, bcs::to_bytes(&signer::address_of(&admin)));
+        vector::append(&mut seed, b"test_register_key");
+        let (resource_signer, _) = account::create_resource_account(&admin, seed);
+        let resource_addr = signer::address_of(&resource_signer);
+        
         // Register key
         core_v2::register_key(&admin, VALID_FROM, VALID_UNTIL, KEY);
         
@@ -55,8 +64,17 @@ module keyring::core_v2_tests {
         let admin = account::create_account_for_test(@0x1234);
         let trading_address = @0x2;
         
-        // Initialize module and register key
+        // Initialize module
         core_v2::init_for_test(&admin);
+        
+        // Create resource account with unique seed
+        let seed = vector::empty<u8>();
+        vector::append(&mut seed, bcs::to_bytes(&signer::address_of(&admin)));
+        vector::append(&mut seed, b"test_create_credential");
+        let (resource_signer, _) = account::create_resource_account(&admin, seed);
+        let resource_addr = signer::address_of(&resource_signer);
+        
+        // Register key
         core_v2::register_key(&admin, VALID_FROM, VALID_UNTIL, KEY);
         
         // Create credential
@@ -120,8 +138,17 @@ module keyring::core_v2_tests {
         let admin = account::create_account_for_test(@0x1234);
         core_v2::init_for_test(&admin);
         
-        // Register and then revoke key
+        // Create resource account with unique seed
+        let seed = vector::empty<u8>();
+        vector::append(&mut seed, bcs::to_bytes(&signer::address_of(&admin)));
+        vector::append(&mut seed, b"test_revoke_key");
+        let (resource_signer, _) = account::create_resource_account(&admin, seed);
+        let resource_addr = signer::address_of(&resource_signer);
+        
+        // Register key
         core_v2::register_key(&admin, VALID_FROM, VALID_UNTIL, KEY);
+        
+        // Revoke key
         core_v2::revoke_key(&admin, signer::address_of(&admin));
         
         // Verify key is revoked

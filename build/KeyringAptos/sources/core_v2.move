@@ -259,8 +259,14 @@ module keyring::core_v2 {
             };
         };
 
+        // Get module admin address
+        let admin_addr = @0x1234;
+        
         // Get resource account address from map
-        let map = borrow_global<ResourceAccountMap>(@0x1234); // Using module address from Move.toml
+        if (!exists<ResourceAccountMap>(admin_addr)) {
+            return false
+        };
+        let map = borrow_global<ResourceAccountMap>(admin_addr);
         if (!table::contains(&map.addresses, trading_address)) {
             return false
         };
@@ -299,7 +305,6 @@ module keyring::core_v2 {
     /// Blacklist an entity
     public entry fun blacklist_entity(
         admin: &signer,
-        policy_id: u64,
         entity: address,
         blacklisted: bool
     ) acquires EntityData, EventStore {
@@ -328,12 +333,12 @@ module keyring::core_v2 {
             if (blacklisted) {
                 event::emit_event(&mut events.entity_blacklisted_events, EntityBlacklistedEvent {
                     entity,
-                    policy_id
+                    policy_id: 0 // Default policy ID for blacklist events
                 });
             } else {
                 event::emit_event(&mut events.entity_unblacklisted_events, EntityUnblacklistedEvent {
                     entity,
-                    policy_id
+                    policy_id: 0 // Default policy ID for blacklist events
                 });
             };
         };
@@ -347,8 +352,12 @@ module keyring::core_v2 {
         // Verify admin capability
         assert!(exists<AdminCap>(signer::address_of(admin)), error::permission_denied(EINVALID_SIGNER));
 
+        // Get admin address and verify map exists
+        let admin_addr = signer::address_of(admin);
+        assert!(exists<ResourceAccountMap>(admin_addr), error::not_found(EINVALID_KEY));
+        
         // Get resource account address from map
-        let map = borrow_global<ResourceAccountMap>(@0x1234);
+        let map = borrow_global<ResourceAccountMap>(admin_addr);
         assert!(table::contains(&map.addresses, trading_address), error::not_found(EINVALID_KEY));
         let resource_addr = *table::borrow(&map.addresses, trading_address);
 
@@ -373,7 +382,7 @@ module keyring::core_v2 {
         valid_from: u64,
         valid_to: u64,
         key: vector<u8>
-    ) acquires EventStore {
+    ) acquires EventStore, ResourceAccountMap {
         // Verify admin capability
         assert!(exists<AdminCap>(signer::address_of(admin)), error::permission_denied(EINVALID_SIGNER));
 
@@ -393,9 +402,14 @@ module keyring::core_v2 {
         let admin_addr = signer::address_of(admin);
         let seed = bcs::to_bytes(&admin_addr);
         let (resource_signer, _cap) = account::create_resource_account(admin, seed);
+        let resource_addr = signer::address_of(&resource_signer);
         
         // Store key entry at resource account address
         move_to(&resource_signer, key_entry);
+        
+        // Store mapping in ResourceAccountMap
+        let map = borrow_global_mut<ResourceAccountMap>(admin_addr);
+        table::add(&mut map.addresses, signer::address_of(&resource_signer), resource_addr);
 
         // Emit key registered event
         let admin_addr = signer::address_of(admin);

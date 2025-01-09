@@ -86,11 +86,25 @@ module keyring::core_v2 {
     }
 
     /// Check if a key is valid
-    public fun is_key_valid(addr: address): bool acquires KeyEntry {
-        if (!exists<KeyEntry>(addr)) {
+    public fun is_key_valid(addr: address): bool acquires KeyEntry, ResourceAccountMap {
+        // Get admin address and verify map exists
+        let admin_addr = @0x1234;
+        if (!exists<ResourceAccountMap>(admin_addr)) {
             return false
         };
-        let key_entry = borrow_global<KeyEntry>(addr);
+        
+        // Get resource account address from map
+        let map = borrow_global<ResourceAccountMap>(admin_addr);
+        if (!table::contains(&map.addresses, addr)) {
+            return false
+        };
+        let resource_addr = *table::borrow(&map.addresses, addr);
+
+        // Check if key entry exists and is valid
+        if (!exists<KeyEntry>(resource_addr)) {
+            return false
+        };
+        let key_entry = borrow_global<KeyEntry>(resource_addr);
         key_entry.is_valid
     }
 
