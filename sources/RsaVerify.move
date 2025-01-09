@@ -448,11 +448,18 @@ module keyring::rsa_verify {
                 let b_j = *vector::borrow(b, j);
                 let t_j = *vector::borrow(&t, j);
                 
-                // Optimized multiply-add using u128 for fewer conversions
-                let product = (a_i as u128) * (b_j as u128);
-                let sum = product + (t_j as u128) + (carry as u128);
-                *vector::borrow_mut(&mut t, j) = (sum & ((1u128 << 64) - 1)) as u64;
-                carry = (sum >> 64) as u64;
+                // Optimized multiply-add using native arithmetic
+                let a_128 = ((a_i as u128) & 0xFFFFFFFFFFFFFFFFu128);
+                let b_128 = ((b_j as u128) & 0xFFFFFFFFFFFFFFFFu128);
+                let t_128 = ((t_j as u128) & 0xFFFFFFFFFFFFFFFFu128);
+                let c_128 = ((carry as u128) & 0xFFFFFFFFFFFFFFFFu128);
+                let product = a_128 * b_128;
+                let sum = product + t_128 + c_128;
+                let mask = 0xFFFFFFFFFFFFFFFFu128;
+                let low_bits = sum & mask;
+                let high_bits = sum >> 64;
+                *vector::borrow_mut(&mut t, j) = ((low_bits & mask) as u64);
+                carry = ((high_bits & mask) as u64);
                 j = j + 1;
             };
             
@@ -469,11 +476,18 @@ module keyring::rsa_verify {
                 let n_j = *vector::borrow(n, j);
                 let t_j = *vector::borrow(&t, j);
                 
-                // Optimized multiply-subtract using u128
-                let product = (m as u128) * (n_j as u128);
-                let sub = ((t_j as u128) + ((1u128 << 64) << 64)) - product - (borrow as u128);
-                *vector::borrow_mut(&mut t, j) = (sub & ((1u128 << 64) - 1)) as u64;
-                borrow = 1 - (sub >> 128) as u64;
+                // Optimized multiply-subtract using native arithmetic
+                let m_128 = ((m as u128) & 0xFFFFFFFFFFFFFFFFu128);
+                let n_128 = ((n_j as u128) & 0xFFFFFFFFFFFFFFFFu128);
+                let t_128 = ((t_j as u128) & 0xFFFFFFFFFFFFFFFFu128);
+                let b_128 = ((borrow as u128) & 0xFFFFFFFFFFFFFFFFu128);
+                let product = m_128 * n_128;
+                let max_val = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFu128;
+                let sub = t_128 + max_val - product - b_128;
+                let mask = 0xFFFFFFFFFFFFFFFFu128;
+                let low_bits = sub & mask;
+                *vector::borrow_mut(&mut t, j) = ((low_bits & mask) as u64);
+                borrow = if (sub >= max_val) { 0u64 } else { 1u64 };
                 j = j + 1;
             };
             
