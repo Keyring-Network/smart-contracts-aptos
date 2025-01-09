@@ -215,36 +215,300 @@ module keyring::rsa_verify {
 
     /// Helper function to perform modular exponentiation
     /// This replaces the precompiled contract call in Solidity
+    /// Uses Montgomery multiplication for efficient modular arithmetic
     fun mod_exp(
         base: vector<u8>,
         exponent: vector<u8>,
         modulus: vector<u8>
     ): vector<u8> {
-        // Convert inputs to u256 representation
-        let base_val = bytes_to_u256(&base);
-        let exp_val = bytes_to_u256(&exponent);
-        let mod_val = bytes_to_u256(&modulus);
+        // Convert inputs to u64 limbs for efficient arithmetic
+        let base_limbs = bytes_to_limbs(&base);
+        let exp_limbs = bytes_to_limbs(&exponent);
+        let mod_limbs = bytes_to_limbs(&modulus);
         
-        // Initialize result to 1
-        let result = vector<u64>[1, 0, 0, 0];
-        let i = 255; // Start from most significant bit
+        // Compute Montgomery parameters
+        let r_squared = compute_r_squared(&mod_limbs);
+        let n0_inv = compute_n0_inv(&mod_limbs);
         
-        // Square and multiply algorithm
+        // Convert base to Montgomery form
+        let base_mont = to_montgomery_form(&base_limbs, &r_squared, &mod_limbs, n0_inv);
+        
+        // Initialize result to R mod N in Montgomery form (which is r_squared)
+        let result = r_squared;
+        
+        // Process exponent bits from left to right
+        let i = (vector::length(&exponent) * 8) - 1;
         while (i >= 0) {
-            // Square step
-            result = mod_mul_u256(&result, &result, &mod_val);
+            // Square in Montgomery form
+            result = montgomery_multiply(&result, &result, &mod_limbs, n0_inv);
             
-            // Multiply step (if current bit is 1)
-            if (get_bit(&exp_val, i)) {
-                result = mod_mul_u256(&result, &base_val, &mod_val);
+            // Multiply if exponent bit is 1
+            if (get_bit(&exp_limbs, i)) {
+                result = montgomery_multiply(&result, &base_mont, &mod_limbs, n0_inv);
             };
             
             if (i == 0) { break };
             i = i - 1;
         };
         
+        // Convert back from Montgomery form
+        let one = vector::singleton(1u64);
+        result = montgomery_multiply(&result, &one, &mod_limbs, n0_inv);
+        
         // Convert result back to bytes
-        u256_to_bytes(&result)
+        limbs_to_bytes(&result)
+    }
+    
+    /// Convert bytes to u64 limbs
+    fun bytes_to_limbs(bytes: &vector<u8>): vector<u64> {
+        let result = vector::empty<u64>();
+        let i = 0;
+        let current_limb = 0u64;
+        let shift = 0u8;
+        
+        while (i < vector::length(bytes)) {
+            current_limb = current_limb | ((*vector::borrow(bytes, i) as u64) << shift);
+            shift = shift + 8;
+            
+            if (shift == 64 || i == vector::length(bytes) - 1) {
+                vector::push_back(&mut result, current_limb);
+                current_limb = 0;
+                shift = 0;
+            };
+            i = i + 1;
+        };
+        
+        if (vector::is_empty(&result)) {
+            vector::push_back(&mut result, 0);
+        };
+        
+        result
+    }
+    
+    /// Convert u64 limbs back to bytes
+    fun limbs_to_bytes(limbs: &vector<u64>): vector<u8> {
+        let result = vector::empty<u8>();
+        let i = 0;
+        
+        while (i < vector::length(limbs)) {
+            let limb = *vector::borrow(limbs, i);
+            let j = 0;
+            
+            while (j < 8) {
+                vector::push_back(&mut result, ((limb >> (j * 8)) & 0xFF) as u8);
+                j = j + 1;
+            };
+            i = i + 1;
+        };
+        
+        // Trim leading zeros
+        while (vector::length(&result) > 1 && *vector::borrow(&result, vector::length(&result) - 1) == 0) {
+            vector::pop_back(&mut result);
+        };
+        
+        result
+    }
+    
+    /// Compute Montgomery parameter R^2 mod N
+    fun compute_r_squared(n: &vector<u64>): vector<u64> {
+        let len = vector::length(n);
+        let result = vector::empty<u64>();
+        let i = 0;
+        
+        // Initialize with 2^(2*k) where k is the number of bits in modulus
+        while (i < len * 2) {
+            vector::push_back(&mut result, 0);
+            i = i + 1;
+        };
+        *vector::borrow_mut(&mut result, len * 2 - 1) = 1;
+        
+        // Reduce modulo n
+        while (compare_limbs(&result, n) >= 0) {
+            subtract_limbs(&mut result, n);
+        };
+        
+        result
+    }
+    
+    /// Compute -n[0]^(-1) mod 2^64 for Montgomery multiplication
+    fun compute_n0_inv(n: &vector<u64>): u64 {
+        let n0 = *vector::borrow(n, 0);
+        let y = 1u64;
+        let i = 0;
+        
+        // Use Newton iteration to find inverse
+        while (i < 6) {  // 6 iterations is enough for 64 bits
+            y = y * (2 - (n0 * y));
+            i = i + 1;
+        };
+        
+        if (y == 0) { 0u64 } else { 0xFFFFFFFFFFFFFFFFu64 - y + 1 }
+    }
+    
+    /// Convert a number to Montgomery form
+    fun to_montgomery_form(
+        a: &vector<u64>,
+        r_squared: &vector<u64>,
+        n: &vector<u64>,
+        n0_inv: u64
+    ): vector<u64> {
+        montgomery_multiply(a, r_squared, n, n0_inv)
+    }
+    
+    /// Perform Montgomery multiplication
+    fun montgomery_multiply(
+        a: &vector<u64>,
+        b: &vector<u64>,
+        n: &vector<u64>,
+        n0_inv: u64
+    ): vector<u64> {
+        let len = vector::length(n);
+        let t = vector::empty<u64>();
+        let i = 0;
+        
+        // Initialize t with enough space
+        while (i < len + 1) {
+            vector::push_back(&mut t, 0);
+            i = i + 1;
+        };
+        
+        // Compute t = a*b
+        i = 0;
+        while (i < len) {
+            let carry = 0u64;
+            let a_i = *vector::borrow(a, i);
+            let j = 0;
+            
+            while (j < len) {
+                let b_j = *vector::borrow(b, j);
+                let t_ij = *vector::borrow(&t, i + j);
+                
+                // Compute product and add to t[i+j]
+                let (low, high) = mul_u64(a_i, b_j);
+                let (sum1, c1) = add_u64(t_ij, low);
+                let (sum2, c2) = add_u64(sum1, carry);
+                *vector::borrow_mut(&mut t, i + j) = sum2;
+                
+                let c1_val = if (c1) { 1u64 } else { 0u64 };
+                let c2_val = if (c2) { 1u64 } else { 0u64 };
+                carry = high + c1_val + c2_val;
+                j = j + 1;
+            };
+            
+            *vector::borrow_mut(&mut t, i + len) = carry;
+            i = i + 1;
+        };
+        
+        // Montgomery reduction
+        i = 0;
+        while (i < len) {
+            let m = (*vector::borrow(&t, i) * n0_inv) & ((1u64 << 64) - 1);
+            let carry = 0u64;
+            let j = 0;
+            
+            while (j < len) {
+                let n_j = *vector::borrow(n, j);
+                let t_ij = *vector::borrow(&t, i + j);
+                
+                // Compute product and add to t[i+j]
+                let (low, high) = mul_u64(m, n_j);
+                let (sum1, c1) = add_u64(t_ij, low);
+                let (sum2, c2) = add_u64(sum1, carry);
+                *vector::borrow_mut(&mut t, i + j) = sum2;
+                
+                let c1_val = if (c1) { 1u64 } else { 0u64 };
+                let c2_val = if (c2) { 1u64 } else { 0u64 };
+                carry = high + c1_val + c2_val;
+                j = j + 1;
+            };
+            
+            let t_i_len = *vector::borrow(&t, i + len);
+            let (sum, c) = add_u64(t_i_len, carry);
+            *vector::borrow_mut(&mut t, i + len) = sum;
+            i = i + 1;
+        };
+        
+        // Extract result and reduce if needed
+        let result = vector::empty<u64>();
+        i = 0;
+        while (i < len) {
+            vector::push_back(&mut result, *vector::borrow(&t, i + 1));
+            i = i + 1;
+        };
+        
+        if (compare_limbs(&result, n) >= 0) {
+            subtract_limbs(&mut result, n);
+        };
+        
+        result
+    }
+    
+    /// Multiply two u64 values, returning (low, high) parts
+    fun mul_u64(a: u64, b: u64): (u64, u64) {
+        let product = (a as u128) * (b as u128);
+        ((product & ((1u128 << 64) - 1)) as u64, (product >> 64) as u64)
+    }
+    
+    /// Add two u64 values, returning sum and carry
+    fun add_u64(a: u64, b: u64): (u64, bool) {
+        let sum = a + b;
+        (sum, sum < a)
+    }
+    
+    /// Compare two limb vectors
+    fun compare_limbs(a: &vector<u64>, b: &vector<u64>): u8 {
+        let len_a = vector::length(a);
+        let len_b = vector::length(b);
+        
+        if (len_a > len_b) {
+            1
+        } else if (len_a < len_b) {
+            2  // represents -1
+        } else {
+            let i = len_a;
+            while (i > 0) {
+                i = i - 1;
+                let a_i = *vector::borrow(a, i);
+                let b_i = *vector::borrow(b, i);
+                if (a_i > b_i) {
+                    return 1
+                } else if (a_i < b_i) {
+                    return 2  // represents -1
+                };
+            };
+            0
+        }
+    }
+    
+    /// Subtract limb vector b from a
+    fun subtract_limbs(a: &mut vector<u64>, b: &vector<u64>) {
+        let borrow = false;
+        let i = 0;
+        let len = vector::length(a);
+        
+        while (i < len) {
+            let a_i = *vector::borrow(a, i);
+            let b_i = if (i < vector::length(b)) { *vector::borrow(b, i) } else { 0 };
+            
+            if (borrow) {
+                if (a_i > 0) {
+                    *vector::borrow_mut(a, i) = a_i - 1 - b_i;
+                    borrow = false;
+                } else {
+                    *vector::borrow_mut(a, i) = 0xFFFFFFFFFFFFFFFF - b_i;
+                    borrow = true;
+                }
+            } else {
+                if (a_i >= b_i) {
+                    *vector::borrow_mut(a, i) = a_i - b_i;
+                    borrow = false;
+                } else {
+                    *vector::borrow_mut(a, i) = (0xFFFFFFFFFFFFFFFF - b_i) + a_i + 1;
+                    borrow = true;
+                }
+            };
+            i = i + 1;
+        };
     }
 
     /// Convert bytes to u256 (represented as vector of 4 u64)
@@ -592,8 +856,8 @@ module keyring::rsa_verify {
             let borrow = 0u64;
             while (i < 4) {
                 let diff = *vector::borrow(&result, i)
-                    .wrapping_sub(*vector::borrow(m, i))
-                    .wrapping_sub(borrow);
+                    - *vector::borrow(m, i)
+                    - (if (borrow > 0) { 1u64 } else { 0u64 });
                 borrow = if (diff > *vector::borrow(&result, i)) { 1 } else { 0 };
                 *vector::borrow_mut(&mut result, i) = diff;
                 i = i + 1;
