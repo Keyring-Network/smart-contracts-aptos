@@ -213,64 +213,67 @@ module keyring::rsa_verify {
         }
     }
 
-    /// Extract bits from a word into a vector
-    fun extract_word_bits(word: u64): vector<u8> {
-        let bits = vector::empty<u8>();
-        let i = 0;
-        while (i < 64) {
-            let bit = ((word >> (63 - i)) & 1) as u8;
-            vector::push_back(&mut bits, bit);
-            i = i + 1;
-        };
-        bits
+    /// Get bit at position in word
+    fun get_bit(word: u64, pos: u8): bool {
+        ((word >> pos) & 1) == 1
     }
 
-    /// Process bits for modular exponentiation using fixed-window method
+    /// Process bits for modular exponentiation using optimized fixed-window method
     fun process_exp_bits(
-        bits: &vector<u8>,
+        exp_limbs: &vector<u64>,
         result: vector<u64>,
         base_mont: &vector<u64>,
         mod_limbs: &vector<u64>,
         n0_inv: u64
     ): vector<u64> {
-        let i = 0;
-        let len = vector::length(bits);
         let current_result = result;
+        let exp_len = vector::length(exp_limbs);
         
-        // Use smaller window size for better performance/memory tradeoff
-        let window_size = 2u8;  // Use u8 for bit shift operations
-        let max_power = 1u64 << window_size;
-        
-        // Precompute small table of powers
-        let base_squared = montgomery_multiply(base_mont, base_mont, mod_limbs, n0_inv);
-        let base_cubed = montgomery_multiply(&base_squared, base_mont, mod_limbs, n0_inv);
-        
+        // Precompute base powers for 4-bit window
+        let powers = vector::empty<vector<u64>>();
+        let base_copy = vector::empty<u64>();
+        let i = 0;
+        let len = vector::length(base_mont);
         while (i < len) {
-            // Always square
-            current_result = montgomery_multiply(&current_result, &current_result, mod_limbs, n0_inv);
+            let element = *vector::borrow(base_mont, i);
+            vector::push_back(&mut base_copy, element);
+            i = i + 1;
+        };
+        vector::push_back(&mut powers, base_copy);  // base^1
+        let i = 1;
+        while (i < 16) {
+            let prev = vector::borrow(&powers, i - 1);
+            let next = montgomery_multiply(prev, base_mont, mod_limbs, n0_inv);
+            vector::push_back(&mut powers, next);
+            i = i + 1;
+        };
+        
+        // Process 4 bits at a time from most significant to least
+        let limb_idx = exp_len;
+        while (limb_idx > 0) {
+            limb_idx = limb_idx - 1;
+            let exp_word = *vector::borrow(exp_limbs, limb_idx);
+            let bit_pos = 60;  // Process 4 bits at a time
             
-            if (i + 1 < len) {
-                // Get 2 bits at a time
-                let bit1 = *vector::borrow(bits, i);
-                let bit2 = *vector::borrow(bits, i + 1);
-                let window_val = ((bit1 as u64) << 1) | (bit2 as u64);
-                
-                // Multiply based on window value
-                if (window_val == 1) {
-                    current_result = montgomery_multiply(&current_result, base_mont, mod_limbs, n0_inv);
-                } else if (window_val == 2) {
-                    current_result = montgomery_multiply(&current_result, &base_squared, mod_limbs, n0_inv);
-                } else if (window_val == 3) {
-                    current_result = montgomery_multiply(&current_result, &base_cubed, mod_limbs, n0_inv);
+            // Process each 4-bit window in the current word
+            let mut_pos = bit_pos;
+            while (mut_pos >= 0 && mut_pos <= 60) {
+                // Square 4 times
+                let j = 0;
+                while (j < 4) {
+                    current_result = montgomery_multiply(&current_result, &current_result, mod_limbs, n0_inv);
+                    j = j + 1;
                 };
                 
-                i = i + 2;
-            } else {
-                // Handle last bit if odd length
-                if (*vector::borrow(bits, i) == 1) {
-                    current_result = montgomery_multiply(&current_result, base_mont, mod_limbs, n0_inv);
+                // Extract 4-bit window
+                let window = ((exp_word >> mut_pos) & 0xF) as u64;
+                if (window != 0) {
+                    let power = vector::borrow(&powers, (window - 1) as u64);
+                    current_result = montgomery_multiply(&current_result, power, mod_limbs, n0_inv);
                 };
-                i = i + 1;
+                
+                if (mut_pos == 0) { break };
+                mut_pos = mut_pos - 4;
             };
         };
         
@@ -304,9 +307,7 @@ module keyring::rsa_verify {
         let i = 0;
         let exp_len = vector::length(&exp_limbs);
         while (i < exp_len) {
-            let exp_word = *vector::borrow(&exp_limbs, i);
-            let bits = extract_word_bits(exp_word);
-            result = process_exp_bits(&bits, result, &base_mont, &mod_limbs, n0_inv);
+            result = process_exp_bits(&exp_limbs, result, &base_mont, &mod_limbs, n0_inv);
             i = i + 1;
         };
         
@@ -428,85 +429,66 @@ module keyring::rsa_verify {
         let len = vector::length(n);
         let t = vector::empty<u64>();
         
-        // Initialize t with zeros
-        {
-            let i = 0;
-            while (i < len + 1) {
-                vector::push_back(&mut t, 0);
-                i = i + 1;
-            };
+        // Pre-allocate result vector
+        let i = 0;
+        while (i < len + 1) {
+            vector::push_back(&mut t, 0);
+            i = i + 1;
         };
         
-        // Compute t = a*b and reduce one word at a time
-        {
-            let i = 0;
-            while (i < len) {
-                let a_i = *vector::borrow(a, i);
-                let carry1 = 0u64;
-                let carry2 = 0u64;
+        // Process one word at a time
+        let i = 0;
+        while (i < len) {
+            let a_i = *vector::borrow(a, i);
+            let carry = 0u64;
+            
+            // Optimized multiply-accumulate loop
+            let j = 0;
+            while (j < len) {
+                let b_j = *vector::borrow(b, j);
+                let t_j = *vector::borrow(&t, j);
                 
-                // Multiply and add to t
-                {
-                    let j = 0;
-                    while (j < len) {
-                        let b_j = *vector::borrow(b, j);
-                        let t_ij = *vector::borrow(&t, j);
-                        
-                        // First multiplication: t += a[i] * b[j]
-                        let (hi1, lo1) = mul_u64(a_i, b_j);
-                        let (sum1, c1) = add_u64(t_ij, lo1);
-                        let (sum2, c2) = add_u64(sum1, carry1);
-                        *vector::borrow_mut(&mut t, j) = sum2;
-                        let c1_val = if (c1) { 1u64 } else { 0u64 };
-                        let c2_val = if (c2) { 1u64 } else { 0u64 };
-                        carry1 = hi1 + c1_val + c2_val;
-                        j = j + 1;
-                    };
-                };
-                
-                // Add first carry
-                let (sum, _) = add_u64(*vector::borrow(&t, len), carry1);
-                *vector::borrow_mut(&mut t, len) = sum;
-                
-                // Compute m = t[0] * n0_inv mod 2^64
-                let m = (*vector::borrow(&t, 0) * n0_inv) & ((1u64 << 64) - 1);
-                
-                // Multiply and subtract n * m
-                {
-                    let j = 0;
-                    while (j < len) {
-                        let n_j = *vector::borrow(n, j);
-                        let t_j = *vector::borrow(&t, j);
-                        
-                        // Second multiplication: t -= n * m
-                        let (hi2, lo2) = mul_u64(m, n_j);
-                        let (diff, borrow) = sub_u64_with_borrow(t_j, lo2, carry2);
-                        *vector::borrow_mut(&mut t, j) = diff;
-                        let borrow_val = if (borrow) { 1u64 } else { 0u64 };
-                        carry2 = hi2 + borrow_val;
-                        j = j + 1;
-                    };
-                };
-                
-                // Subtract final carry
-                let (diff, _) = sub_u64_with_borrow(*vector::borrow(&t, len), carry2, 0);
-                *vector::borrow_mut(&mut t, len) = diff;
-                
-                // Shift right one word
-                {
-                    let j = 0;
-                    while (j < len) {
-                        *vector::borrow_mut(&mut t, j) = *vector::borrow(&t, j + 1);
-                        j = j + 1;
-                    };
-                };
-                *vector::borrow_mut(&mut t, len) = 0;
-                
-                i = i + 1;
+                // Combined multiply-add with single carry propagation
+                let (hi, lo) = mul_u64(a_i, b_j);
+                let sum = ((lo as u128) + (t_j as u128) + (carry as u128));
+                *vector::borrow_mut(&mut t, j) = (sum & ((1u128 << 64) - 1)) as u64;
+                carry = hi + ((sum >> 64) as u64);
+                j = j + 1;
             };
+            
+            // Add final carry
+            *vector::borrow_mut(&mut t, len) = carry;
+            
+            // Optimized reduction step
+            let m = (*vector::borrow(&t, 0) * n0_inv) & ((1u64 << 64) - 1);
+            let borrow = 0u64;
+            
+            // Combined multiply-subtract loop
+            let j = 0;
+            while (j < len) {
+                let n_j = *vector::borrow(n, j);
+                let t_j = *vector::borrow(&t, j);
+                
+                let (hi, lo) = mul_u64(m, n_j);
+                let sub = ((t_j as u128) - (lo as u128) - (borrow as u128));
+                *vector::borrow_mut(&mut t, j) = (sub & ((1u128 << 64) - 1)) as u64;
+                borrow = hi + ((sub >> 127) as u64);  // Use sign bit for borrow
+                j = j + 1;
+            };
+            
+            // Single pass shift with carry propagation
+            let shift_i = 0;
+            while (shift_i < len) {
+                let val = *vector::borrow(&t, shift_i + 1);
+                *vector::borrow_mut(&mut t, shift_i) = val;
+                shift_i = shift_i + 1;
+            };
+            *vector::borrow_mut(&mut t, len) = 0;
+            
+            i = i + 1;
         };
         
-        // Final reduction if needed
+        // Final reduction
         if (compare_limbs(&t, n) >= 0) {
             subtract_limbs(&mut t, n);
         };
