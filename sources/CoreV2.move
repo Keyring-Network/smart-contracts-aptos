@@ -260,7 +260,7 @@ module keyring::core_v2 {
         };
 
         // Get admin address from module
-        let admin_addr = @0x1234;
+        let admin_addr = signer::address_of(admin);
         
         // Get resource account address from map
         if (!exists<ResourceAccountMap>(admin_addr)) {
@@ -354,7 +354,7 @@ module keyring::core_v2 {
         assert!(exists<AdminCap>(signer::address_of(admin)), error::permission_denied(EINVALID_SIGNER));
 
         // Get admin address and verify map exists
-        let admin_addr = @0x1234;
+        let admin_addr = signer::address_of(admin);
         assert!(exists<ResourceAccountMap>(admin_addr), error::not_found(EINVALID_KEY));
         
         // Get resource account address from map
@@ -383,7 +383,7 @@ module keyring::core_v2 {
         valid_from: u64,
         valid_to: u64,
         key: vector<u8>
-    ) acquires EventStore {
+    ) acquires EventStore, ResourceAccountMap {
         // Verify admin capability
         assert!(exists<AdminCap>(signer::address_of(admin)), error::permission_denied(EINVALID_SIGNER));
 
@@ -410,7 +410,7 @@ module keyring::core_v2 {
         
         // Store mapping in ResourceAccountMap
         let map = borrow_global_mut<ResourceAccountMap>(admin_addr);
-        table::add(&mut map.addresses, admin_addr, resource_addr);
+        table::add(&mut map.addresses, signer::address_of(&resource_signer), resource_addr);
 
         // Emit key registered event
         let admin_addr = signer::address_of(admin);
