@@ -426,7 +426,7 @@ module keyring::rsa_verify {
         n0_inv: u64
     ): vector<u64> {
         let len = vector::length(n);
-        let mut t = vector::empty<u64>();
+        let t = vector::empty<u64>();
         
         // Pre-allocate result vector
         let i = 0;
@@ -439,7 +439,7 @@ module keyring::rsa_verify {
         let i = 0;
         while (i < len) {
             let a_i = *vector::borrow(a, i);
-            let mut carry = 0u64;
+            let carry = 0u64;
             
             // Compute a[i] * b + carry
             let j = 0;
@@ -462,7 +462,7 @@ module keyring::rsa_verify {
             
             // Compute quotient for reduction
             let m = (*vector::borrow(&t, 0) * n0_inv) & ((1u64 << 64) - 1);
-            carry = 0;
+            let carry_sub = 0u64;
             
             // Subtract m * n
             let j = 0;
@@ -471,21 +471,21 @@ module keyring::rsa_verify {
                 let t_j = *vector::borrow(&t, j);
                 
                 let (hi, lo) = mul_u64(m, n_j);
-                let (diff, borrow) = sub_u64_with_borrow(t_j, lo, carry);
+                let (diff, borrow) = sub_u64_with_borrow(t_j, lo, carry_sub);
                 *vector::borrow_mut(&mut t, j) = diff;
                 
-                carry = hi + (if (borrow) { 1u64 } else { 0u64 });
+                let carry_sub = hi + (if (borrow) { 1u64 } else { 0u64 });
                 j = j + 1;
             };
             
             // Subtract final carry and shift
-            let (diff, _) = sub_u64_with_borrow(*vector::borrow(&t, len), carry, 0);
+            let (diff_final, _) = sub_u64_with_borrow(*vector::borrow(&t, len), carry_sub, 0);
             
             // Shift right one word
-            let j = 0;
-            while (j < len) {
-                *vector::borrow_mut(&mut t, j) = *vector::borrow(&t, j + 1);
-                j = j + 1;
+            let shift_idx = 0;
+            while (shift_idx < len) {
+                *vector::borrow_mut(&mut t, shift_idx) = *vector::borrow(&t, shift_idx + 1);
+                shift_idx = shift_idx + 1;
             };
             *vector::borrow_mut(&mut t, len) = 0;
             
