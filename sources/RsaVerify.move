@@ -261,32 +261,36 @@ module keyring::rsa_verify {
     fun mod_reduce_u256(value: &mut vector<u64>, modulus: &vector<u64>) {
         while (compare_u256(value, modulus) >= 0) {
             let i = 3;
-            let borrow = false;
+            let mut_borrow = false;
             
             while (i >= 0) {
-                let (word_diff, new_borrow) = {
-                    let v = *vector::borrow(value, (i as u64));
-                    let m = *vector::borrow(modulus, (i as u64));
-                    
-                    let (temp_diff, temp_borrow) = if (borrow) {
-                        if (v == 0) {
-                            (0xFFFFFFFFFFFFFFFF, true)
-                        } else {
-                            (v - 1, false)
-                        }
-                    } else {
-                        (v, false)
-                    };
-                    
-                    if (temp_diff < m) {
-                        ((temp_diff as u128 + (1u128 << 64) - (m as u128)) as u64, true)
-                    } else {
-                        (temp_diff - m, false)
-                    }
+                let v = *vector::borrow(value, (i as u64));
+                let m = *vector::borrow(modulus, (i as u64));
+                
+                // Handle existing borrow
+                let v_adjusted = if (mut_borrow && v == 0) {
+                    mut_borrow = true;
+                    0xFFFFFFFFFFFFFFFF
+                } else if (mut_borrow) {
+                    mut_borrow = false;
+                    v - 1
+                } else {
+                    v
+                };
+                
+                // Perform subtraction with potential new borrow
+                let (result, new_borrow) = if (v_adjusted >= m) {
+                    (v_adjusted - m, false)
+                } else {
+                    // Use u128 for intermediate calculation
+                    let v_big = ((v_adjusted as u128) + (1u128 << 64));
+                    let m_big = (m as u128);
+                    ((v_big - m_big) as u64, true)
                 };
                 
                 let current = vector::borrow_mut(value, (i as u64));
-                *current = word_diff;
+                *current = result;
+                mut_borrow = new_borrow;
                 
                 if (i == 0) { break };
                 i = i - 1;
