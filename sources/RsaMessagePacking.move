@@ -98,9 +98,18 @@ module keyring::rsa_message_packing {
         vector::push_back(&mut result, (valid_until & 0xFF) as u8);
         
         // Add cost (20 bytes = 160 bits, padded from 128 bits)
+        // First add padding bytes (all zeros for the high bits)
         let i = 19;
+        while (i >= 16) {
+            vector::push_back(&mut result, 0u8);
+            i = i - 1;
+        };
+        
+        // Then add the actual 128-bit value bytes
         while (i >= 0) {
-            vector::push_back(&mut result, ((cost >> (i * 8)) & 0xFF) as u8);
+            let shift_amount = ((i as u128) * 8u128);
+            let byte = ((cost >> shift_amount) & 0xFFu128) as u8;
+            vector::push_back(&mut result, byte);
             if (i == 0) { break };
             i = i - 1;
         };
