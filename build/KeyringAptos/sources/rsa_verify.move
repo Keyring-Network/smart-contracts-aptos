@@ -2,6 +2,15 @@ module keyring::rsa_verify {
     use std::vector;
     use aptos_framework::hash;
 
+    /// Error codes for arithmetic operations
+    const EINVALID_LENGTH: u64 = 5;
+    const EINVALID_MODULUS: u64 = 6;
+
+    /// Constants for byte operations
+    const U64_BYTES: u64 = 8;
+    const U256_BYTES: u64 = 32;
+    const U256_BITS: u64 = 256;
+
     /// Constants for SHA256 parameter encoding
     const SHA256_HASH_LEN: u64 = 32;  // Length of SHA256 hash (256 bits = 32 bytes)
     
@@ -204,200 +213,348 @@ module keyring::rsa_verify {
         }
     }
 
+    /// Extract bits from a word into a vector
+    fun extract_word_bits(word: u64): vector<u8> {
+        let bits = vector::empty<u8>();
+        let i = 0;
+        while (i < 64) {
+            let bit = ((word >> (63 - i)) & 1) as u8;
+            vector::push_back(&mut bits, bit);
+            i = i + 1;
+        };
+        bits
+    }
+
+    /// Process bits for modular exponentiation
+    fun process_exp_bits(
+        bits: &vector<u8>,
+        result: vector<u64>,
+        base_mont: &vector<u64>,
+        mod_limbs: &vector<u64>,
+        n0_inv: u64
+    ): vector<u64> {
+        let i = 0;
+        let len = vector::length(bits);
+        let current_result = result;
+        
+        while (i < len) {
+            // Square in Montgomery form
+            let squared = montgomery_multiply(&current_result, &current_result, mod_limbs, n0_inv);
+            
+            // Multiply if bit is 1
+            current_result = if (*vector::borrow(bits, i) == 1) {
+                montgomery_multiply(&squared, base_mont, mod_limbs, n0_inv)
+            } else {
+                squared
+            };
+            
+            i = i + 1;
+        };
+        
+        current_result
+    }
+
     /// Helper function to perform modular exponentiation
     /// This replaces the precompiled contract call in Solidity
-    /// For testing, returns mock values that match test vectors
+    /// Uses Montgomery multiplication for efficient modular arithmetic
     fun mod_exp(
-        signature: vector<u8>,
-        _exponent: vector<u8>,
+        base: vector<u8>,
+        exponent: vector<u8>,
         modulus: vector<u8>
     ): vector<u8> {
-        // For testing, we'll check if this is our known test vector
-        let test_sig = x"52646d189f3467cab366080801ad7e9903a98077ddd83a9e574d1596b0361c027b1419bf655b8b84a4a4691a5bca9cb0be012b52816d4d6411b9cbd9d9070a3dc4167f14423c7f4f508d0a1e853c75dc3ff89d8a25b890409d2b9044954bcd58dbe255380ff3443197b67580421281ba3caaf96bb555636d686180e1457a15d3";
+        // Convert inputs to u64 limbs for efficient arithmetic
+        let base_limbs = bytes_to_limbs(&base);
+        let exp_limbs = bytes_to_limbs(&exponent);
+        let mod_limbs = bytes_to_limbs(&modulus);
         
-        // Check if this matches our test vector signature
-        let is_test_vector = vector::length(&signature) == vector::length(&test_sig);
+        // Compute Montgomery parameters
+        let r_squared = compute_r_squared(&mod_limbs);
+        let n0_inv = compute_n0_inv(&mod_limbs);
+        
+        // Convert base to Montgomery form
+        let base_mont = montgomery_multiply(&base_limbs, &r_squared, &mod_limbs, n0_inv);
+        
+        // Initialize result to 1 in Montgomery form (which is R mod N)
+        let result = r_squared;
+        
+        // Process each word of the exponent
         let i = 0;
-        while (i < vector::length(&signature) && is_test_vector) {
-            if (*vector::borrow(&signature, i) != *vector::borrow(&test_sig, i)) {
-                is_test_vector = false;
+        let exp_len = vector::length(&exp_limbs);
+        while (i < exp_len) {
+            let exp_word = *vector::borrow(&exp_limbs, i);
+            let bits = extract_word_bits(exp_word);
+            result = process_exp_bits(&bits, result, &base_mont, &mod_limbs, n0_inv);
+            i = i + 1;
+        };
+        
+        // Convert back from Montgomery form
+        let one = vector::empty();
+        vector::push_back(&mut one, 1u64);
+        while (vector::length(&one) < vector::length(&mod_limbs)) {
+            vector::push_back(&mut one, 0u64);
+        };
+        result = montgomery_multiply(&result, &one, &mod_limbs, n0_inv);
+        
+        // Convert result back to bytes
+        limbs_to_bytes(&result)
+    }
+    
+    /// Convert bytes to u64 limbs
+    fun bytes_to_limbs(bytes: &vector<u8>): vector<u64> {
+        let result = vector::empty<u64>();
+        let i = 0;
+        let current_limb = 0u64;
+        let shift = 0u8;
+        
+        while (i < vector::length(bytes)) {
+            current_limb = current_limb | ((*vector::borrow(bytes, i) as u64) << shift);
+            shift = shift + 8;
+            
+            if (shift == 64 || i == vector::length(bytes) - 1) {
+                vector::push_back(&mut result, current_limb);
+                current_limb = 0;
+                shift = 0;
             };
             i = i + 1;
         };
         
-        if (is_test_vector) {
-            // Return the expected decrypted value for test vector
-            let result = vector::empty<u8>();
-            // Add initial bytes (0x00 || 0x01)
-            vector::push_back(&mut result, 0x00);
-            vector::push_back(&mut result, 0x01);
-            // Add padding bytes (0xFF)
-            let i = 0;
-            while (i < 204) {  // Add padding bytes up to correct length
-                vector::push_back(&mut result, 0xFF);
-                i = i + 1;
-            };
-            // Add separator byte
-            vector::push_back(&mut result, 0x00);
-            // Add DigestInfo ASN.1 structure for SHA256
-            vector::append(&mut result, SHA256_ALGORITHM_ID);
-            // Add SHA256 hash value for test vector 1
-            vector::append(&mut result, x"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
-            // Fill remaining bytes with zeros
-            while (vector::length(&result) < vector::length(&modulus)) {
-                vector::push_back(&mut result, 0x00);
-            };
-            result
-        } else {
-            // For other signatures, return zeros
-            let result = vector::empty<u8>();
-            let i = 0;
-            let mod_len = vector::length(&modulus);
-            while (i < mod_len) {
-                vector::push_back(&mut result, 0);
-                i = i + 1;
-            };
-            result
-        }
-    }
-    
-    /// Convert bytes to u256 (represented as vector of 4 u64)
-    fun bytes_to_u256(bytes: &vector<u8>): vector<u64> {
-        let result = vector<u64>[0, 0, 0, 0];
-        let i = 0;
-        let len = vector::length(bytes);
-        
-        while (i < len && i < 32) {
-            let byte = *vector::borrow(bytes, i);
-            let word_idx = i / 8;
-            let bit_pos = ((i % 8) * 8) as u8;
-            let val = (byte as u64) << bit_pos;
-            
-            let current = vector::borrow_mut(&mut result, word_idx);
-            *current = *current | val;
-            
-            i = i + 1;
+        if (vector::is_empty(&result)) {
+            vector::push_back(&mut result, 0);
         };
         
         result
     }
     
-    /// Convert u256 back to bytes
-    fun u256_to_bytes(val: &vector<u64>): vector<u8> {
+    /// Convert u64 limbs back to bytes
+    fun limbs_to_bytes(limbs: &vector<u64>): vector<u8> {
         let result = vector::empty<u8>();
         let i = 0;
         
-        while (i < 32) {
-            let word_idx = i / 8;
-            let byte_pos = ((i % 8) * 8) as u8;
-            let word = *vector::borrow(val, word_idx);
-            let byte = ((word >> byte_pos) & 0xFF as u64) as u8;
-            vector::push_back(&mut result, byte);
-            i = i + 1;
-        };
-        
-        result
-    }
-    
-    /// Get bit at position i from u256
-    fun get_bit(val: &vector<u64>, i: u64): bool {
-        let word_idx = i / 64;
-        let bit_pos = (i % 64) as u8;
-        let word = *vector::borrow(val, (word_idx as u64));
-        ((word >> bit_pos) & 1) == 1
-    }
-    
-    /// Modular multiplication for u256 values
-    /// Uses the standard schoolbook multiplication algorithm with reduction
-    fun mod_mul_u256(a: &vector<u64>, b: &vector<u64>, m: &vector<u64>): vector<u64> {
-        let result = vector<u64>[0, 0, 0, 0];
-        let i = 0;
-        
-        // Perform multiplication one word at a time
-        while (i < 4) {
+        while (i < vector::length(limbs)) {
+            let limb = *vector::borrow(limbs, i);
             let j = 0;
-            let carry = 0u64;
-            let a_word = *vector::borrow(a, i);
             
-            while (j < 4) {
-                let b_word = *vector::borrow(b, j);
-                let pos = i + j;
-                if (pos < 4) {
-                    let current = vector::borrow_mut(&mut result, pos);
-                    let product = (a_word as u128) * (b_word as u128) + (carry as u128) + (*current as u128);
-                    *current = (product & 0xFFFFFFFFFFFFFFFF) as u64;
-                    carry = (product >> 64) as u64;
-                };
+            while (j < 8) {
+                vector::push_back(&mut result, ((limb >> (j * 8)) & 0xFF) as u8);
                 j = j + 1;
             };
             i = i + 1;
         };
         
-        // Perform modular reduction
-        mod_reduce_u256(&mut result, m);
+        // Trim leading zeros
+        while (vector::length(&result) > 1 && *vector::borrow(&result, vector::length(&result) - 1) == 0) {
+            vector::pop_back(&mut result);
+        };
+        
         result
     }
     
-    /// Modular reduction for u256 values
-    /// Uses repeated subtraction for simplicity
-    fun mod_reduce_u256(value: &mut vector<u64>, modulus: &vector<u64>) {
-        while (compare_u256(value, modulus) >= 0) {
-            let i = 3;
-            let _mut_borrow = false;
+    /// Compute Montgomery parameter R^2 mod N
+    fun compute_r_squared(n: &vector<u64>): vector<u64> {
+        let len = vector::length(n);
+        let result = vector::empty<u64>();
+        let i = 0;
+        
+        // Initialize with 2^(2*k) where k is the number of bits in modulus
+        while (i < len * 2) {
+            vector::push_back(&mut result, 0);
+            i = i + 1;
+        };
+        *vector::borrow_mut(&mut result, len * 2 - 1) = 1;
+        
+        // Reduce modulo n
+        while (compare_limbs(&result, n) >= 0) {
+            subtract_limbs(&mut result, n);
+        };
+        
+        result
+    }
+    
+    /// Compute -n[0]^(-1) mod 2^64 for Montgomery multiplication
+    fun compute_n0_inv(n: &vector<u64>): u64 {
+        let n0 = *vector::borrow(n, 0);
+        let y = 1u64;
+        let i = 0;
+        
+        // Use Newton iteration to find inverse
+        while (i < 6) {  // 6 iterations is enough for 64 bits
+            y = y * (2 - (n0 * y));
+            i = i + 1;
+        };
+        
+        if (y == 0) { 0u64 } else { 0xFFFFFFFFFFFFFFFFu64 - y + 1 }
+    }
+    
+    /// Convert a number to Montgomery form
+    fun to_montgomery_form(
+        a: &vector<u64>,
+        r_squared: &vector<u64>,
+        n: &vector<u64>,
+        n0_inv: u64
+    ): vector<u64> {
+        montgomery_multiply(a, r_squared, n, n0_inv)
+    }
+    
+    /// Perform Montgomery multiplication
+    fun montgomery_multiply(
+        a: &vector<u64>,
+        b: &vector<u64>,
+        n: &vector<u64>,
+        n0_inv: u64
+    ): vector<u64> {
+        let len = vector::length(n);
+        let t = vector::empty<u64>();
+        let i = 0;
+        
+        // Initialize t with enough space
+        while (i < len + 1) {
+            vector::push_back(&mut t, 0);
+            i = i + 1;
+        };
+        
+        // Compute t = a*b
+        i = 0;
+        while (i < len) {
+            let carry = 0u64;
+            let a_i = *vector::borrow(a, i);
+            let j = 0;
             
-            while (i >= 0) {
-                let v = *vector::borrow(value, (i as u64));
-                let m = *vector::borrow(modulus, (i as u64));
+            while (j < len) {
+                let b_j = *vector::borrow(b, j);
+                let t_ij = *vector::borrow(&t, i + j);
                 
-                // Handle existing borrow
-                let v_adjusted = if (_mut_borrow && v == 0) {
-                    _mut_borrow = true;
-                    0xFFFFFFFFFFFFFFFF
-                } else if (_mut_borrow) {
-                    _mut_borrow = false;
-                    v - 1
-                } else {
-                    v
-                };
+                // Compute product and add to t[i+j]
+                let (low, high) = mul_u64(a_i, b_j);
+                let (sum1, c1) = add_u64(t_ij, low);
+                let (sum2, c2) = add_u64(sum1, carry);
+                *vector::borrow_mut(&mut t, i + j) = sum2;
                 
-                // Perform subtraction with potential new borrow
-                let (result, new_borrow) = if (v_adjusted >= m) {
-                    (v_adjusted - m, false)
-                } else {
-                    // Use u128 for intermediate calculation
-                    let v_big = ((v_adjusted as u128) + (1u128 << 64));
-                    let m_big = (m as u128);
-                    ((v_big - m_big) as u64, true)
-                };
-                
-                let current = vector::borrow_mut(value, (i as u64));
-                *current = result;
-                _mut_borrow = new_borrow;
-                
-                if (i == 0) { break };
-                i = i - 1;
+                let c1_val = if (c1) { 1u64 } else { 0u64 };
+                let c2_val = if (c2) { 1u64 } else { 0u64 };
+                carry = high + c1_val + c2_val;
+                j = j + 1;
             };
+            
+            *vector::borrow_mut(&mut t, i + len) = carry;
+            i = i + 1;
+        };
+        
+        // Montgomery reduction
+        i = 0;
+        while (i < len) {
+            let m = (*vector::borrow(&t, i) * n0_inv) & ((1u64 << 64) - 1);
+            let carry = 0u64;
+            let j = 0;
+            
+            while (j < len) {
+                let n_j = *vector::borrow(n, j);
+                let t_ij = *vector::borrow(&t, i + j);
+                
+                // Compute product and add to t[i+j]
+                let (low, high) = mul_u64(m, n_j);
+                let (sum1, c1) = add_u64(t_ij, low);
+                let (sum2, c2) = add_u64(sum1, carry);
+                *vector::borrow_mut(&mut t, i + j) = sum2;
+                
+                let c1_val = if (c1) { 1u64 } else { 0u64 };
+                let c2_val = if (c2) { 1u64 } else { 0u64 };
+                carry = high + c1_val + c2_val;
+                j = j + 1;
+            };
+            
+            let t_i_len = *vector::borrow(&t, i + len);
+            let (sum, _c) = add_u64(t_i_len, carry);
+            *vector::borrow_mut(&mut t, i + len) = sum;
+            i = i + 1;
+        };
+        
+        // Extract result and reduce if needed
+        let result = vector::empty<u64>();
+        i = 0;
+        while (i < len) {
+            vector::push_back(&mut result, *vector::borrow(&t, i + 1));
+            i = i + 1;
+        };
+        
+        if (compare_limbs(&result, n) >= 0) {
+            subtract_limbs(&mut result, n);
+        };
+        
+        result
+    }
+    
+    /// Multiply two u64 values, returning (low, high) parts
+    fun mul_u64(a: u64, b: u64): (u64, u64) {
+        let product = (a as u128) * (b as u128);
+        ((product & ((1u128 << 64) - 1)) as u64, (product >> 64) as u64)
+    }
+    
+    /// Add two u64 values, returning sum and carry
+    fun add_u64(a: u64, b: u64): (u64, bool) {
+        let sum = a + b;
+        (sum, sum < a)
+    }
+    
+    /// Compare two limb vectors
+    fun compare_limbs(a: &vector<u64>, b: &vector<u64>): u8 {
+        let len_a = vector::length(a);
+        let len_b = vector::length(b);
+        
+        if (len_a > len_b) {
+            1
+        } else if (len_a < len_b) {
+            2  // represents -1
+        } else {
+            let i = len_a;
+            while (i > 0) {
+                i = i - 1;
+                let a_i = *vector::borrow(a, i);
+                let b_i = *vector::borrow(b, i);
+                if (a_i > b_i) {
+                    return 1
+                } else if (a_i < b_i) {
+                    return 2  // represents -1
+                };
+            };
+            0
         }
     }
     
-    /// Compare two u256 values
-    /// Returns -1 if a < b, 0 if a == b, 1 if a > b
-    fun compare_u256(a: &vector<u64>, b: &vector<u64>): u8 {
-        let i = 3;
-        while (i >= 0) {
-            let a_word = *vector::borrow(a, (i as u64));
-            let b_word = *vector::borrow(b, (i as u64));
-            if (a_word > b_word) {
-                return 1
+    /// Subtract limb vector b from a with proper overflow handling
+    fun subtract_limbs(a: &mut vector<u64>, b: &vector<u64>) {
+        let borrow = 0u64;
+        let i = 0;
+        let len = vector::length(a);
+        
+        while (i < len) {
+            let a_i = *vector::borrow(a, i);
+            let b_i = if (i < vector::length(b)) { *vector::borrow(b, i) } else { 0 };
+            
+            // Handle borrow from previous subtraction
+            let temp = if (borrow == 1) {
+                if (a_i > 0) {
+                    a_i - 1
+                } else {
+                    0xFFFFFFFFFFFFFFFF
+                }
+            } else {
+                a_i
             };
-            if (a_word < b_word) {
-                return 2 // Using 2 to represent -1
+            
+            // Perform subtraction with borrow propagation
+            let (result, new_borrow) = if (temp >= b_i) {
+                (temp - b_i, if (borrow == 1 && a_i == 0) { 1 } else { 0 })
+            } else {
+                ((0xFFFFFFFFFFFFFFFF - b_i + 1 + temp), 1)
             };
-            if (i == 0) { break };
-            i = i - 1;
+            
+            *vector::borrow_mut(a, i) = result;
+            borrow = new_borrow;
+            i = i + 1;
         };
-        0
     }
+
+
 
     /// Helper function to scan padding recursively
     fun scan_padding(decipher: &vector<u8>): bool {
@@ -512,4 +669,6 @@ module keyring::rsa_verify {
             }
         }
     }
+
+
 }
