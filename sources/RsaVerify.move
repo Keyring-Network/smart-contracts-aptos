@@ -423,7 +423,7 @@ module keyring::rsa_verify {
             };
             
             let t_i_len = *vector::borrow(&t, i + len);
-            let (sum, c) = add_u64(t_i_len, carry);
+            let (sum, _c) = add_u64(t_i_len, carry);
             *vector::borrow_mut(&mut t, i + len) = sum;
             i = i + 1;
         };
@@ -763,121 +763,5 @@ module keyring::rsa_verify {
         }
     }
 
-    /// Convert bytes to u256 (represented as vector<u64> with 4 elements)
-    fun bytes_to_u256(bytes: &vector<u8>): vector<u64> {
-        let result = vector::empty<u64>();
-        let i = 0;
-        while (i < 4) {
-            let val = 0u64;
-            let j = 0;
-            while (j < 8) {
-                if (i * 8 + j < vector::length(bytes)) {
-                    val = (val << 8) | (*vector::borrow(bytes, i * 8 + j) as u64);
-                };
-                j = j + 1;
-            };
-            vector::push_back(&mut result, val);
-            i = i + 1;
-        };
-        result
-    }
 
-    /// Convert u256 (vector<u64> with 4 elements) to bytes
-    fun u256_to_bytes(value: &vector<u64>): vector<u8> {
-        let result = vector::empty<u8>();
-        let i = 0;
-        while (i < 4) {
-            let val = *vector::borrow(value, i);
-            let j = 7;
-            while (true) {
-                vector::push_back(&mut result, ((val >> (j * 8)) & 0xFF) as u8);
-                if (j == 0) { break };
-                j = j - 1;
-            };
-            i = i + 1;
-        };
-        result
-    }
-
-    /// Get bit at position i in u256 number
-    fun get_bit(value: &vector<u64>, i: u64): bool {
-        let limb_idx = i / 64;
-        let bit_idx = i % 64;
-        let limb = *vector::borrow(value, limb_idx);
-        ((limb >> bit_idx) & 1) == 1
-    }
-
-    /// Modular multiplication for u256 numbers
-    fun mod_mul_u256(a: &vector<u64>, b: &vector<u64>, m: &vector<u64>): vector<u64> {
-        // Initialize result to 0
-        let result = vector::empty<u64>();
-        let i = 0;
-        while (i < 4) {
-            vector::push_back(&mut result, 0u64);
-            i = i + 1;
-        };
-
-        // For each bit in b
-        let i = 0;
-        while (i < U256_BITS) {
-            // Double result
-            if (i > 0) {
-                result = mod_add_u256(&result, &result, m);
-            };
-            
-            // Add a if current bit is 1
-            if (get_bit(b, i)) {
-                result = mod_add_u256(&result, a, m);
-            };
-            
-            i = i + 1;
-        };
-
-        result
-    }
-
-    /// Modular addition for u256 numbers
-    fun mod_add_u256(a: &vector<u64>, b: &vector<u64>, m: &vector<u64>): vector<u64> {
-        let result = vector::empty<u64>();
-        let carry = 0u64;
-        
-        // Add corresponding limbs
-        let i = 0;
-        while (i < 4) {
-            let sum = *vector::borrow(a, i) + *vector::borrow(b, i) + carry;
-            carry = if (sum < *vector::borrow(a, i)) { 1 } else { 0 };
-            vector::push_back(&mut result, sum);
-            i = i + 1;
-        };
-
-        // Reduce modulo m
-        while (compare_u256(&result, m) >= 0) {
-            let i = 0;
-            let borrow = 0u64;
-            while (i < 4) {
-                let diff = *vector::borrow(&result, i)
-                    - *vector::borrow(m, i)
-                    - (if (borrow > 0) { 1u64 } else { 0u64 });
-                borrow = if (diff > *vector::borrow(&result, i)) { 1 } else { 0 };
-                *vector::borrow_mut(&mut result, i) = diff;
-                i = i + 1;
-            };
-        };
-
-        result
-    }
-
-    /// Compare two u256 numbers
-    fun compare_u256(a: &vector<u64>, b: &vector<u64>): i8 {
-        let i = 3;
-        while (true) {
-            let a_val = *vector::borrow(a, i);
-            let b_val = *vector::borrow(b, i);
-            if (a_val > b_val) { return 1 }
-            else if (a_val < b_val) { return -1 };
-            if (i == 0) { break };
-            i = i - 1;
-        };
-        0
-    }
 }
