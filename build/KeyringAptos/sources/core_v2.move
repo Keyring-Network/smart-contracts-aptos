@@ -3,6 +3,7 @@ module keyring::core_v2 {
     friend keyring::core_v2_tests;
     #[test_only]
     friend keyring::rsa_verify_tests;
+    use std::vector;
     use std::error;
     use std::signer;
     use aptos_framework::timestamp;
@@ -30,19 +31,19 @@ module keyring::core_v2 {
     }
 
     struct CredentialCreatedEvent has drop, store {
-        policy_id: u256,
+        policy_id: u64,
         entity: address,
         exp: u64,
         backdoor: vector<u8>
     }
 
     struct EntityBlacklistedEvent has drop, store {
-        policy_id: u256,
+        policy_id: u64,
         entity: address
     }
 
     struct EntityUnblacklistedEvent has drop, store {
-        policy_id: u256,
+        policy_id: u64,
         entity: address
     }
 
@@ -149,10 +150,10 @@ module keyring::core_v2 {
     public entry fun create_credential(
         admin: &signer,
         trading_address: address,
-        policy_id: u256,
+        policy_id: u64,
         valid_from: u64,
         valid_until: u64,
-        cost: u256,
+        cost: u128,
         _key: vector<u8>,
         signature: vector<u8>,
         backdoor: vector<u8>
@@ -167,8 +168,8 @@ module keyring::core_v2 {
         let message = rsa_message_packing::pack_auth_message(
             trading_address,
             policy_id,
-            (valid_from as u256),
-            (valid_until as u256),
+            valid_from,
+            valid_until,
             cost,
             backdoor
         );
@@ -204,9 +205,9 @@ module keyring::core_v2 {
     /// Check if a credential is valid
     public fun check_credential(
         trading_address: address,
-        policy_id: u256,
+        policy_id: u64,
         timestamp: u64,
-        cost: u256,
+        cost: u128,
         _key: vector<u8>,
         signature: vector<u8>,
         backdoor: vector<u8>
@@ -239,8 +240,8 @@ module keyring::core_v2 {
         let message = rsa_message_packing::pack_auth_message(
             trading_address,
             policy_id,
-            (key_entry.valid_from as u256),
-            (key_entry.valid_to as u256),
+            key_entry.valid_from,
+            key_entry.valid_to,
             cost,
             backdoor
         );
@@ -252,7 +253,7 @@ module keyring::core_v2 {
     /// Blacklist an entity
     public entry fun blacklist_entity(
         admin: &signer,
-        policy_id: u256,
+        policy_id: u64,
         entity: address,
         blacklisted: bool
     ) acquires EntityData, EventStore {
