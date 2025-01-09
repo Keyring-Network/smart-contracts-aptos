@@ -261,21 +261,32 @@ module keyring::rsa_verify {
     fun mod_reduce_u256(value: &mut vector<u64>, modulus: &vector<u64>) {
         while (compare_u256(value, modulus) >= 0) {
             let i = 3;
-            let borrow = 0i128;
+            let borrow = false;
             
             while (i >= 0) {
-                let v = *vector::borrow(value, (i as u64));
-                let m = *vector::borrow(modulus, (i as u64));
-                let diff = (v as i128) - (m as i128) - borrow;
-                let current = vector::borrow_mut(value, (i as u64));
-                
-                if (diff < 0) {
-                    *current = ((1u128 << 64) as u64) + (diff as u64);
-                    borrow = 1;
-                } else {
-                    *current = diff as u64;
-                    borrow = 0;
+                let (word_diff, new_borrow) = {
+                    let v = *vector::borrow(value, (i as u64));
+                    let m = *vector::borrow(modulus, (i as u64));
+                    
+                    let (temp_diff, temp_borrow) = if (borrow) {
+                        if (v == 0) {
+                            (0xFFFFFFFFFFFFFFFF, true)
+                        } else {
+                            (v - 1, false)
+                        }
+                    } else {
+                        (v, false)
+                    };
+                    
+                    if (temp_diff < m) {
+                        ((temp_diff as u128 + (1u128 << 64) - (m as u128)) as u64, true)
+                    } else {
+                        (temp_diff - m, false)
+                    }
                 };
+                
+                let current = vector::borrow_mut(value, (i as u64));
+                *current = word_diff;
                 
                 if (i == 0) { break };
                 i = i - 1;
@@ -363,4 +374,3 @@ module keyring::rsa_verify {
             check_params_match(decipher, d_index, params, p_index + 1, len)
         }
     }
-}
