@@ -121,34 +121,18 @@ module keyring::rsa_verify {
         };
         
         // Calculate start of hash marker based on explicit parameter format
-        let hash_marker_start = padding_length + 1 + SHA256_EXPLICIT_NULL_PARAM_LEN;
+        let hash_marker_start = padding_length + 1;  // Start after padding and separator byte
         std::debug::print(&b"Hash marker start:");
         std::debug::print(&hash_marker_start);
         
-        // Verify we have enough bytes for the hash
-        if (hash_marker_start + SHA256_HASH_LEN > vector::length(&decipher)) {
-            std::debug::print(&b"Not enough bytes for hash");
-            std::debug::print(&b"Required length:");
-            std::debug::print(&(hash_marker_start + SHA256_HASH_LEN));
-            std::debug::print(&b"Actual length:");
-            std::debug::print(&vector::length(&decipher));
+        // Verify we have enough bytes for DigestInfo and hash
+        if (hash_marker_start + SHA256_EXPLICIT_NULL_PARAM_LEN + SHA256_HASH_LEN > vector::length(&decipher)) {
+            std::debug::print(&b"Not enough bytes for DigestInfo and hash");
             return false
         };
         
         // Extract and verify the actual message hash
-        let decipher_len = vector::length(&decipher);
-        let hash_start = hash_marker_start + SHA256_PARAM_OFFSET;
-        
-        // Verify we have enough bytes for the hash
-        if (hash_start + SHA256_HASH_LEN > decipher_len) {
-            std::debug::print(&b"Not enough bytes for hash");
-            std::debug::print(&b"Required length:");
-            std::debug::print(&(hash_start + SHA256_HASH_LEN));
-            std::debug::print(&b"Actual length:");
-            std::debug::print(&decipher_len);
-            return false
-        };
-        
+        let hash_start = hash_marker_start + SHA256_EXPLICIT_NULL_PARAM_LEN;  // Start after DigestInfo
         let extracted_hash = vector::empty();
         let i = 0;
         while (i < SHA256_HASH_LEN) {

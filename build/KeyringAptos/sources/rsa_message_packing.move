@@ -102,22 +102,21 @@ module keyring::rsa_message_packing {
         // Add cost (20 bytes = 160 bits)
         // First add padding bytes (zeros for high bits)
         {
-            let padding_i = 19;
-            while (padding_i >= 16) {
+            let i = 0;
+            while (i < 4) { // Add 4 padding bytes (bytes 16-19)
                 vector::push_back(&mut result, 0u8);
-                padding_i = padding_i - 1;
+                i = i + 1;
             };
         };
 
-        // Add actual 128-bit value bytes
+        // Add actual 128-bit value bytes from most significant to least significant
         {
-            let value_i = 15;
-            let divisor = 256u128;
-            while (value_i >= 0) {
-                let power = pow(divisor, (value_i as u64));
-                let byte = ((cost / power) % divisor) as u8;
+            let i = 0;
+            while (i < 16) { // Add 16 value bytes (bytes 0-15)
+                let shift_amount = ((15 - i) * 8) as u8;
+                let byte = ((cost >> shift_amount) & 0xFFu128) as u8;
                 vector::push_back(&mut result, byte);
-                value_i = value_i - 1;
+                i = i + 1;
             };
         };
         
