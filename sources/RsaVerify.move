@@ -432,16 +432,13 @@ module keyring::rsa_verify {
             i = i + 1;
         };
         
-        // Process one word at a time with iteration limit
-        let max_iterations = len * len * 2; // Reasonable upper bound
-        let mut total_iterations = 0;
+        // Process one word at a time
         let i = 0;
+        let max_outer_iterations = len * 2; // Reasonable upper bound
         
-        while (i < len) {
-            if (total_iterations > max_iterations) {
-                std::debug::print(&b"Montgomery multiplication timeout");
-                return t
-            };
+        while (i < len && i < max_outer_iterations) {
+            std::debug::print(&b"Outer loop iteration:");
+            std::debug::print(&i);
             
             let a_i = *vector::borrow(a, i);
             let carry = 0u64;
@@ -479,7 +476,7 @@ module keyring::rsa_verify {
             
             // Optimized reduction step
             let m = (*vector::borrow(&t, 0) * n0_inv) & 0xFFFFFFFFFFFFFFFFu64;
-            let mut borrow = 0u64;
+            let borrow = 0u64;
             
             // Combined multiply-subtract loop
             let j = 0;
@@ -514,8 +511,7 @@ module keyring::rsa_verify {
             i = i + 1;
         };
         
-        std::debug::print(&b"Montgomery multiplication completed in iterations:");
-        std::debug::print(&total_iterations);
+        std::debug::print(&b"Montgomery multiplication completed");
         
         // Final reduction
         if (compare_limbs(&t, n) >= 0) {
