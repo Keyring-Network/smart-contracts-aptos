@@ -3,7 +3,7 @@ module keyring::core_v2 {
     friend keyring::core_v2_tests;
     #[test_only]
     friend keyring::rsa_verify_tests;
-    use std::vector::{Self, length, empty, push_back, append, borrow, borrow_mut};
+    use std::vector;
     use std::error;
     use std::signer;
     use aptos_framework::timestamp;

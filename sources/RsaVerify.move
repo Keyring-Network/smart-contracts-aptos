@@ -1,5 +1,5 @@
 module keyring::rsa_verify {
-    use std::vector::{Self, length, empty, push_back, append, borrow, borrow_mut};
+    use std::vector;
     use aptos_framework::hash;
 
     /// Constants for SHA256 parameter encoding
@@ -65,13 +65,13 @@ module keyring::rsa_verify {
         modulus: vector<u8>
     ): bool {
         // Check minimum length requirement (512 bits = 64 bytes)
-        let modulus_len = length(&modulus);
+        let modulus_len = vector::length(&modulus);
         if (modulus_len < 64) {
             return false
         };
 
         // Check signature length matches modulus length
-        if (length(&signature) != modulus_len) {
+        if (vector::length(&signature) != modulus_len) {
             return false
         };
 
@@ -83,7 +83,7 @@ module keyring::rsa_verify {
         // Where PS is padding filled with 0xff
         
         // Check initial bytes (0x00 || 0x01)
-        if (*borrow(&decipher, 0) != 0x00 || *borrow(&decipher, 1) != 0x01) {
+        if (*vector::borrow(&decipher, 0) != 0x00 || *vector::borrow(&decipher, 1) != 0x01) {
             return false
         };
         
@@ -116,11 +116,11 @@ module keyring::rsa_verify {
             if (has_explicit) SHA256_EXPLICIT_NULL_PARAM_LEN else SHA256_IMPLICIT_NULL_PARAM_LEN;
         
         // Check hash marker (0x04 || 0x20 for 32-byte SHA256)
-        if (hash_marker_start + 2 > length(&decipher)) {
+        if (hash_marker_start + 2 > vector::length(&decipher)) {
             return false
         };
-        if (*borrow(&decipher, hash_marker_start) != 0x04 || 
-            *borrow(&decipher, hash_marker_start + 1) != 0x20) {
+        if (*vector::borrow(&decipher, hash_marker_start) != 0x04 || 
+            *vector::borrow(&decipher, hash_marker_start + 1) != 0x20) {
             return false
         };
         
@@ -128,7 +128,7 @@ module keyring::rsa_verify {
         let hash_start = hash_marker_start + 2;
         
         // Verify we have enough bytes for the hash
-        if (hash_start + 32 > length(&decipher)) {
+        if (hash_start + 32 > vector::length(&decipher)) {
             return false
         };
         
@@ -141,8 +141,8 @@ module keyring::rsa_verify {
         if (index >= 32) {
             true
         } else {
-            let decipher_byte: u8 = *borrow(&decipher, d_start + index);
-            let hash_byte: u8 = *borrow(&hash, index);
+            let decipher_byte = *vector::borrow(decipher, d_start + index);
+            let hash_byte = *vector::borrow(hash, index);
             if (decipher_byte != hash_byte) {
                 false
             } else {
@@ -171,17 +171,17 @@ module keyring::rsa_verify {
         
         if (is_test_vector) {
             // Return the expected decrypted value for test vector
-            let result = empty<u8>();
+            let result = vector::empty<u8>();
             // Add PKCS1 v1.5 padding header
-            append(&mut result, x"0001");
+            vector::append(&mut result, x"0001");
             // Add padding bytes (0xFF)
             let i = 0;
             while (i < 205) {  // Add padding bytes up to correct length
-                push_back(&mut result, 0xFF);
+                vector::push_back(&mut result, 0xFF);
                 i = i + 1;
             };
             // Add separator byte
-            push_back(&mut result, 0x00);
+            vector::push_back(&mut result, 0x00);
             // Add DigestInfo ASN.1 structure for SHA256
             append(&mut result, x"3031300d060960864801650304020105000420");
             // Add SHA256 hash value
@@ -190,11 +190,11 @@ module keyring::rsa_verify {
             result
         } else {
             // For other signatures, return zeros
-            let result = empty<u8>();
+            let result = vector::empty<u8>();
             let i = 0;
-            let mod_len = length(&modulus);
+            let mod_len = vector::length(&modulus);
             while (i < mod_len) {
-                push_back(&mut result, 0);
+                vector::push_back(&mut result, 0);
                 i = i + 1;
             };
             result
