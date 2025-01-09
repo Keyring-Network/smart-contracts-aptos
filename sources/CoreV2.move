@@ -372,8 +372,8 @@ module keyring::core_v2 {
         
         // Get resource account address from map
         let map = borrow_global<ResourceAccountMap>(admin_addr);
-        assert!(table::contains(&map.addresses, trading_address), error::not_found(EINVALID_KEY));
-        let resource_addr = *table::borrow(&map.addresses, trading_address);
+        assert!(table::contains(&map.addresses, admin_addr), error::not_found(EINVALID_KEY));
+        let resource_addr = *table::borrow(&map.addresses, admin_addr);
 
         // Check if key entry exists
         assert!(exists<KeyEntry>(resource_addr), error::not_found(EINVALID_KEY));
@@ -398,7 +398,8 @@ module keyring::core_v2 {
         key: vector<u8>
     ) acquires EventStore, ResourceAccountMap {
         // Verify admin capability
-        assert!(exists<AdminCap>(signer::address_of(admin)), error::permission_denied(EINVALID_SIGNER));
+        let admin_addr = signer::address_of(admin);
+        assert!(exists<AdminCap>(admin_addr), error::permission_denied(EINVALID_SIGNER));
 
         // Validate timestamps
         assert!(valid_to > valid_from, error::invalid_argument(EINVALID_KEY_REGISTRATION));
@@ -413,8 +414,9 @@ module keyring::core_v2 {
         };
 
         // Create resource account for storing key entry
-        let admin_addr = signer::address_of(admin);
-        let seed = bcs::to_bytes(&admin_addr);
+        let seed = vector::empty<u8>();
+        vector::append(&mut seed, bcs::to_bytes(&admin_addr));
+        vector::append(&mut seed, b"key_registration");
         let (resource_signer, _cap) = account::create_resource_account(admin, seed);
         let resource_addr = signer::address_of(&resource_signer);
         
@@ -423,10 +425,11 @@ module keyring::core_v2 {
         
         // Store mapping in ResourceAccountMap
         let map = borrow_global_mut<ResourceAccountMap>(admin_addr);
-        table::add(&mut map.addresses, signer::address_of(&resource_signer), resource_addr);
+        if (!table::contains(&map.addresses, admin_addr)) {
+            table::add(&mut map.addresses, admin_addr, resource_addr);
+        };
 
         // Emit key registered event
-        let admin_addr = signer::address_of(admin);
         let events = borrow_global_mut<EventStore>(admin_addr);
         event::emit_event(&mut events.key_registered_events, KeyRegisteredEvent {
             key_hash: get_key_hash(&key),

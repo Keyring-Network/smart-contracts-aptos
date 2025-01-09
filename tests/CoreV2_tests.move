@@ -46,7 +46,6 @@ module keyring::core_v2_tests {
         vector::append(&mut seed, bcs::to_bytes(&signer::address_of(&admin)));
         vector::append(&mut seed, b"test_register_key");
         let (resource_signer, _) = account::create_resource_account(&admin, seed);
-        let resource_addr = signer::address_of(&resource_signer);
         
         // Register key
         core_v2::register_key(&admin, VALID_FROM, VALID_UNTIL, KEY);
@@ -72,7 +71,6 @@ module keyring::core_v2_tests {
         vector::append(&mut seed, bcs::to_bytes(&signer::address_of(&admin)));
         vector::append(&mut seed, b"test_create_credential");
         let (resource_signer, _) = account::create_resource_account(&admin, seed);
-        let resource_addr = signer::address_of(&resource_signer);
         
         // Register key
         core_v2::register_key(&admin, VALID_FROM, VALID_UNTIL, KEY);
@@ -143,7 +141,6 @@ module keyring::core_v2_tests {
         vector::append(&mut seed, bcs::to_bytes(&signer::address_of(&admin)));
         vector::append(&mut seed, b"test_revoke_key");
         let (resource_signer, _) = account::create_resource_account(&admin, seed);
-        let resource_addr = signer::address_of(&resource_signer);
         
         // Register key
         core_v2::register_key(&admin, VALID_FROM, VALID_UNTIL, KEY);

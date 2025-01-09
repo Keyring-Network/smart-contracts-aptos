@@ -52,7 +52,7 @@ module keyring::core_v2_tests {
         core_v2::register_key(&admin, VALID_FROM, VALID_UNTIL, KEY);
         
         // Verify key is registered
-        assert!(core_v2::is_key_valid(resource_addr), 1);
+        assert!(core_v2::is_key_valid(signer::address_of(&admin)), 1);
     }
 
     #[test(framework = @0x1)]
@@ -149,9 +149,9 @@ module keyring::core_v2_tests {
         core_v2::register_key(&admin, VALID_FROM, VALID_UNTIL, KEY);
         
         // Revoke key
-        core_v2::revoke_key(&admin, resource_addr);
+        core_v2::revoke_key(&admin, signer::address_of(&admin));
         
         // Verify key is revoked
-        assert!(!core_v2::is_key_valid(resource_addr), 1);
+        assert!(!core_v2::is_key_valid(signer::address_of(&admin)), 1);
     }
 }
