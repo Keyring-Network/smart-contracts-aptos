@@ -75,6 +75,20 @@ module keyring::core_v2 {
     const EINVALID_KEY_REGISTRATION: u64 = 7;
     const EINVALID_UPGRADE: u64 = 8;
 
+    /// Check if an address has admin capability
+    public fun has_admin_cap(addr: address): bool {
+        exists<AdminCap>(addr)
+    }
+
+    /// Check if a key is valid
+    public fun is_key_valid(addr: address): bool acquires KeyEntry {
+        if (!exists<KeyEntry>(addr)) {
+            return false
+        };
+        let key_entry = borrow_global<KeyEntry>(addr);
+        key_entry.is_valid
+    }
+
     /// Calculate key hash using SHA3-256 (closest to Solidity's keccak256)
     fun get_key_hash(key: &vector<u8>): vector<u8> {
         hash::sha3_256(*key)

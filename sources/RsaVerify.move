@@ -84,8 +84,11 @@ module keyring::rsa_verify {
         };
         
         // Find DigestInfo by scanning for 0x00 byte after padding
-        let mut i = 2;
-        while (i < vector::length(&decipher)) {
+        let copy i = 2;
+        loop {
+            if (i >= vector::length(&decipher)) {
+                break
+            };
             if (*vector::borrow(&decipher, i) == 0x00) {
                 break
             };
