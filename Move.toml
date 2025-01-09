@@ -1,0 +1,10 @@
+[package]
+name = "KeyringAptos"
+version = "1.0.0"
+authors = ["Keyring Network"]
+
+[addresses]
+keyring = "0x1234"  # Using a placeholder address for development
+
+[dependencies]
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-framework/", rev = "main" }
