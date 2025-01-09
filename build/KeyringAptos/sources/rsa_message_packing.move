@@ -6,17 +6,6 @@ module keyring::rsa_message_packing {
     /// Constants for field sizes
     const TARGET_ADDR_LEN: u64 = 20; // 20 bytes for address
 
-    /// Create a zero-filled vector of specified length
-    fun create_zero_vector(len: u64): vector<u8> {
-        let result = vector::empty<u8>();
-        let i = 0;
-        while (i < len) {
-            vector::push_back(&mut result, 0u8);
-            i = i + 1;
-        };
-        result
-    }
-
     /// Error codes
     const EINVALID_POLICY_ID: u64 = 1;
     const EINVALID_VALID_FROM: u64 = 2;
@@ -50,32 +39,34 @@ module keyring::rsa_message_packing {
         assert!(valid_until <= MAX_VALID_TIME, error::invalid_argument(EINVALID_VALID_UNTIL));
         assert!(cost <= MAX_COST, error::invalid_argument(EINVALID_COST));
 
-        // Create output vector
-        let result = vector::empty<u8>();
-
         // Add trading address (20 bytes) in big-endian format
-        // Convert address to bytes (32 bytes) and take first 20 bytes
+        // Convert address to bytes and extract last 20 bytes
         let addr_bytes = bcs::to_bytes(&trading_address);
-        let len = vector::length(&addr_bytes);
-        assert!(len > 0, error::invalid_argument(EINVALID_ADDRESS));
         
-        // Create zero-filled result vector for address (20 bytes)
-        let result = create_zero_vector(TARGET_ADDR_LEN);
+        // Debug print address bytes
+        std::debug::print(&b"BCS encoded address bytes:");
+        std::debug::print(&addr_bytes);
         
-        // Get address bytes after BCS length prefix
-        let addr_bytes_len = vector::length(&addr_bytes);
-        if (addr_bytes_len > 1) {
-            let available_bytes = addr_bytes_len - 1;
-            let bytes_to_copy = if (available_bytes > TARGET_ADDR_LEN) TARGET_ADDR_LEN else available_bytes;
-            
-            let i = 0;
-            while (i < bytes_to_copy) {
-                let src_byte = *vector::borrow(&addr_bytes, i + 1);
-                let dst_ref = vector::borrow_mut(&mut result, i);
-                *dst_ref = src_byte;
-                i = i + 1;
-            };
+        // Create result vector for address bytes
+        let result = vector::empty<u8>();
+        
+        // Extract last 20 bytes of the address in big-endian order
+        let addr_len = vector::length(&addr_bytes);
+        let start = if (addr_len >= TARGET_ADDR_LEN) { addr_len - TARGET_ADDR_LEN } else { 0 };
+        let i = 0;
+        while (i < TARGET_ADDR_LEN && start + i < addr_len) {
+            vector::push_back(&mut result, *vector::borrow(&addr_bytes, start + i));
+            i = i + 1;
         };
+        
+        // Pad with zeros if needed (should be at the start for big-endian)
+        while (vector::length(&result) < TARGET_ADDR_LEN) {
+            vector::insert(&mut result, 0, 0u8);
+        };
+        
+        // Debug print final result
+        std::debug::print(&b"Final address bytes:");
+        std::debug::print(&result);
         
         // Add padding byte (0)
         vector::push_back(&mut result, 0u8);
@@ -98,16 +89,33 @@ module keyring::rsa_message_packing {
         vector::push_back(&mut result, (valid_until & 0xFF) as u8);
         
         // Add cost (20 bytes = 160 bits, padded from 128 bits)
+        // First add padding bytes (all zeros for the high bits)
         let i = 19;
-        while (i >= 0) {
-            vector::push_back(&mut result, ((cost >> (i * 8)) & 0xFF) as u8);
-            if (i == 0) { break };
+        while (i >= 16) {
+            vector::push_back(&mut result, 0u8);
             i = i - 1;
         };
+        
+        // Then add the actual 128-bit value bytes
+        // Extract bytes using division and modulo with a recursive helper
+        extract_bytes(cost, i, &mut result);
         
         // Add backdoor data
         vector::append(&mut result, backdoor);
         
         result
+    }
+
+    /// Helper function to extract bytes from a u128 value
+    fun extract_bytes(value: u128, index: u64, result: &mut vector<u8>) {
+        if (index == 0) {
+            vector::push_back(result, (value & 0xFFu128) as u8);
+            return
+        };
+        
+        let divisor = 256u128;
+        let byte = (value % divisor) as u8;
+        extract_bytes(value / divisor, index - 1, result);
+        vector::push_back(result, byte);
     }
 }

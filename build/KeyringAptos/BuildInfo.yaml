@@ -12,10 +12,10 @@ compiled_package_info:
     std: "0000000000000000000000000000000000000000000000000000000000000001"
     vm: "0000000000000000000000000000000000000000000000000000000000000000"
     vm_reserved: "0000000000000000000000000000000000000000000000000000000000000000"
-  source_digest: DD0BD6534F978267740A921338782D46987B7C56241985761EFC5D2D4AC8F448
+  source_digest: 7DEC0F5CD1CB9F97AF5AB2E55B287AFD549F8267F71BBB3518EEAB5846F8AE1F
   build_flags:
-    dev_mode: true
-    test_mode: true
+    dev_mode: false
+    test_mode: false
     override_std: ~
     generate_docs: false
     generate_abis: false
@@ -28,7 +28,7 @@ compiled_package_info:
     fetch_deps_only: false
     skip_fetch_latest_git_deps: false
     compiler_config:
-      bytecode_version: ~
+      bytecode_version: 7
       known_attributes:
         - bytecode_instruction
         - deprecated

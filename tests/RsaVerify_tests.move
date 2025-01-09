@@ -1,6 +1,8 @@
 #[test_only]
 module keyring::rsa_verify_tests {
     use std::vector;
+    use std::debug;
+    use aptos_std::bcs;
     use keyring::rsa_verify;
     use keyring::rsa_message_packing;
 
@@ -63,6 +65,23 @@ module keyring::rsa_verify_tests {
             expected: _
         } = test_data;
 
+        // Debug print test vector inputs
+        std::debug::print(&b"=== Test Vector Debug Info ===");
+        std::debug::print(&b"Trading Address:");
+        std::debug::print(&trading_address);
+        std::debug::print(&b"Raw Address Bytes:");
+        std::debug::print(&bcs::to_bytes(&trading_address));
+        std::debug::print(&b"Policy ID:");
+        std::debug::print(&policy_id);
+        std::debug::print(&b"Create Before:");
+        std::debug::print(&create_before);
+        std::debug::print(&b"Valid Until:");
+        std::debug::print(&valid_until);
+        std::debug::print(&b"Cost:");
+        std::debug::print(&cost);
+        std::debug::print(&b"Backdoor:");
+        std::debug::print(&backdoor);
+
         // Create RSA key
         let key = rsa_verify::create_key(RSA_E, key_bytes);
 
@@ -76,8 +95,18 @@ module keyring::rsa_verify_tests {
             backdoor
         );
 
+        // Debug print packed message
+        std::debug::print(&b"Packed Message:");
+        std::debug::print(&message);
+
         // Verify signature
-        rsa_verify::verify_auth_message(message, signature, key)
+        let result = rsa_verify::verify_auth_message(message, signature, key);
+        
+        // Debug print result
+        std::debug::print(&b"Verification Result:");
+        std::debug::print(&result);
+        
+        result
     }
 
     #[test]
