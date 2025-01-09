@@ -71,7 +71,7 @@ module keyring::rsa_verify {
         std::debug::print(&b"=== Starting RSA Verification ===");
         
         // First compute SHA256 of data
-        let message_hash = hash::sha2_256(data);
+        let _message_hash = hash::sha2_256(data);
         std::debug::print(&b"Message hash computed");
         
         // Print debug info about inputs

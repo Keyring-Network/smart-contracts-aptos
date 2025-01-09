@@ -5,12 +5,14 @@ module keyring::core_v2 {
     friend keyring::rsa_verify_tests;
     use std::error;
     use std::signer;
+    use std::bcs;
     use aptos_framework::timestamp;
     use aptos_framework::coin;
     use aptos_framework::aptos_coin::AptosCoin;
     use aptos_framework::event::{Self, EventHandle};
     use aptos_framework::account;
     use aptos_framework::hash;
+    use aptos_framework::table::{Self, Table};
     use keyring::rsa_verify::{Self, RsaKey};
     use keyring::rsa_message_packing;
 
@@ -97,6 +99,8 @@ module keyring::core_v2 {
         hash::sha3_256(*key)
     }
 
+    // Event structs are defined above
+
     /// Resource structs
     struct KeyEntry has key, store {
         is_valid: bool,
@@ -114,17 +118,41 @@ module keyring::core_v2 {
         version: u64
     }
 
+    /// Maps trading addresses to their resource accounts
+    struct ResourceAccountMap has key {
+        addresses: Table<address, address>
+    }
+
     #[test_only]
     /// Initialize module for testing
-    public fun init_for_test(admin: &signer) acquires EventStore {
-        init_module(admin)
+    public fun init_for_test(admin: &signer) {
+        // Create admin capability with initial version and resource account map
+        move_to(admin, AdminCap {
+            version: VERSION
+        });
+        move_to(admin, ResourceAccountMap {
+            addresses: table::new()
+        });
+        // Initialize event store
+        move_to(admin, EventStore {
+            key_registered_events: account::new_event_handle<KeyRegisteredEvent>(admin),
+            key_revoked_events: account::new_event_handle<KeyRevokedEvent>(admin),
+            credential_created_events: account::new_event_handle<CredentialCreatedEvent>(admin),
+            entity_blacklisted_events: account::new_event_handle<EntityBlacklistedEvent>(admin),
+            entity_unblacklisted_events: account::new_event_handle<EntityUnblacklistedEvent>(admin),
+            admin_set_events: account::new_event_handle<AdminSetEvent>(admin),
+            upgrade_events: account::new_event_handle<UpgradeEvent>(admin)
+        });
     }
 
     /// Initialize module
     fun init_module(admin: &signer) acquires EventStore {
-        // Create admin capability with initial version
+        // Create admin capability with initial version and resource account map
         move_to(admin, AdminCap {
             version: VERSION
+        });
+        move_to(admin, ResourceAccountMap {
+            addresses: table::new()
         });
         // Initialize event store
         move_to(admin, EventStore {
@@ -156,7 +184,7 @@ module keyring::core_v2 {
         _key: vector<u8>,
         signature: vector<u8>,
         backdoor: vector<u8>
-    ) acquires EventStore {
+    ) acquires EventStore, ResourceAccountMap {
         // Verify admin capability
         assert!(exists<AdminCap>(signer::address_of(admin)), error::permission_denied(EINVALID_SIGNER));
 
@@ -187,8 +215,20 @@ module keyring::core_v2 {
             key: rsa_key
         };
 
-        // Store key entry
-        move_to(admin, key_entry);
+        // Create resource account for storing key entry
+        let seed = bcs::to_bytes(&trading_address);
+        let (resource_signer, _cap) = account::create_resource_account(admin, seed);
+        let resource_addr = signer::address_of(&resource_signer);
+        
+        // Store mapping of trading address to resource account
+        let map = borrow_global_mut<ResourceAccountMap>(signer::address_of(admin));
+        table::add(&mut map.addresses, trading_address, resource_addr);
+        
+        // Ensure resource account doesn't already have a key entry
+        assert!(!exists<KeyEntry>(resource_addr), error::already_exists(EINVALID_KEY));
+        
+        // Store key entry at resource account address
+        move_to(&resource_signer, key_entry);
 
         // Emit credential created event
         let admin_addr = signer::address_of(admin);
@@ -210,7 +250,7 @@ module keyring::core_v2 {
         _key: vector<u8>,
         signature: vector<u8>,
         backdoor: vector<u8>
-    ): bool acquires KeyEntry, EntityData {
+    ): bool acquires KeyEntry, EntityData, ResourceAccountMap {
         // Check if entity is blacklisted
         if (exists<EntityData>(trading_address)) {
             let entity_data = borrow_global<EntityData>(trading_address);
@@ -219,13 +259,20 @@ module keyring::core_v2 {
             };
         };
 
-        // Check if key entry exists
-        if (!exists<KeyEntry>(trading_address)) {
+        // Get resource account address from map
+        let map = borrow_global<ResourceAccountMap>(@0x1234); // Using module address from Move.toml
+        if (!table::contains(&map.addresses, trading_address)) {
+            return false
+        };
+        let resource_addr = *table::borrow(&map.addresses, trading_address);
+
+        // Check if key entry exists at resource account
+        if (!exists<KeyEntry>(resource_addr)) {
             return false
         };
 
         // Get key entry
-        let key_entry = borrow_global<KeyEntry>(trading_address);
+        let key_entry = borrow_global<KeyEntry>(resource_addr);
         if (!key_entry.is_valid) {
             return false
         };
@@ -268,20 +315,25 @@ module keyring::core_v2 {
                 blacklisted,
                 exp: timestamp::now_seconds()
             };
-            move_to(admin, entity_data);
+            // Create resource account for storing entity data
+            let seed = bcs::to_bytes(&entity);
+            let (resource_signer, _cap) = account::create_resource_account(admin, seed);
+            
+            // Store entity data at resource account address
+            move_to(&resource_signer, entity_data);
 
             // Emit appropriate event
             let admin_addr = signer::address_of(admin);
             let events = borrow_global_mut<EventStore>(admin_addr);
             if (blacklisted) {
                 event::emit_event(&mut events.entity_blacklisted_events, EntityBlacklistedEvent {
-                    policy_id,
-                    entity
+                    entity,
+                    policy_id
                 });
             } else {
                 event::emit_event(&mut events.entity_unblacklisted_events, EntityUnblacklistedEvent {
-                    policy_id,
-                    entity
+                    entity,
+                    policy_id
                 });
             };
         };
@@ -291,15 +343,20 @@ module keyring::core_v2 {
     public entry fun revoke_key(
         admin: &signer,
         trading_address: address
-    ) acquires KeyEntry, EventStore {
+    ) acquires KeyEntry, EventStore, ResourceAccountMap {
         // Verify admin capability
         assert!(exists<AdminCap>(signer::address_of(admin)), error::permission_denied(EINVALID_SIGNER));
 
+        // Get resource account address from map
+        let map = borrow_global<ResourceAccountMap>(@0x1234);
+        assert!(table::contains(&map.addresses, trading_address), error::not_found(EINVALID_KEY));
+        let resource_addr = *table::borrow(&map.addresses, trading_address);
+
         // Check if key entry exists
-        assert!(exists<KeyEntry>(trading_address), error::not_found(EINVALID_KEY));
+        assert!(exists<KeyEntry>(resource_addr), error::not_found(EINVALID_KEY));
 
         // Revoke key
-        let key_entry = borrow_global_mut<KeyEntry>(trading_address);
+        let key_entry = borrow_global_mut<KeyEntry>(resource_addr);
         key_entry.is_valid = false;
 
         // Emit key revoked event
@@ -332,8 +389,13 @@ module keyring::core_v2 {
             key: rsa_verify::create_key(x"010001", key)
         };
 
-        // Store key entry
-        move_to(admin, key_entry);
+        // Create resource account for storing key entry
+        let admin_addr = signer::address_of(admin);
+        let seed = bcs::to_bytes(&admin_addr);
+        let (resource_signer, _cap) = account::create_resource_account(admin, seed);
+        
+        // Store key entry at resource account address
+        move_to(&resource_signer, key_entry);
 
         // Emit key registered event
         let admin_addr = signer::address_of(admin);
