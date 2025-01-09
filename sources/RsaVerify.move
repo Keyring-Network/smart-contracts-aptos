@@ -453,7 +453,9 @@ module keyring::rsa_verify {
                 let (sum1, c1) = add_u64(t_ij, lo1);
                 let (sum2, c2) = add_u64(sum1, carry1);
                 *vector::borrow_mut(&mut t, j) = sum2;
-                carry1 = hi1 + (if c1 { 1u64 } else { 0u64 }) + (if c2 { 1u64 } else { 0u64 });
+                let c1_val = if (c1) { 1u64 } else { 0u64 };
+                let c2_val = if (c2) { 1u64 } else { 0u64 };
+                carry1 = hi1 + c1_val + c2_val;
                 j = j + 1;
             };
             
@@ -474,7 +476,8 @@ module keyring::rsa_verify {
                 let (hi2, lo2) = mul_u64(m, n_j);
                 let (diff, borrow) = sub_u64_with_borrow(t_j, lo2, carry2);
                 *vector::borrow_mut(&mut t, j) = diff;
-                carry2 = hi2 + (if borrow { 1u64 } else { 0u64 });
+                let borrow_val = if (borrow) { 1u64 } else { 0u64 };
+                carry2 = hi2 + borrow_val;
                 j = j + 1;
             };
             
