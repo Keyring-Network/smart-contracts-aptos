@@ -2,12 +2,17 @@ module keyring::core_v2 {
     use std::vector;
     use std::error;
     use std::signer;
+    use std::string;
     use aptos_framework::timestamp;
     use aptos_framework::coin;
     use aptos_framework::aptos_coin::AptosCoin;
     use aptos_framework::event::{Self, EventHandle};
+    use aptos_framework::code;
     use keyring::rsa_verify::{Self, RsaKey};
     use keyring::rsa_message_packing;
+
+    /// Module version for upgrades
+    const VERSION: u64 = 1;
 
     /// Events
     struct KeyRegisteredEvent has drop, store {
@@ -43,6 +48,12 @@ module keyring::core_v2 {
         new_admin: address
     }
 
+    struct UpgradeEvent has drop, store {
+        old_version: u64,
+        new_version: u64,
+        metadata: vector<u8>
+    }
+
     /// Event handles stored in AdminCap
     struct EventStore has key {
         key_registered_events: EventHandle<KeyRegisteredEvent>,
@@ -50,7 +61,8 @@ module keyring::core_v2 {
         credential_created_events: EventHandle<CredentialCreatedEvent>,
         entity_blacklisted_events: EventHandle<EntityBlacklistedEvent>,
         entity_unblacklisted_events: EventHandle<EntityUnblacklistedEvent>,
-        admin_set_events: EventHandle<AdminSetEvent>
+        admin_set_events: EventHandle<AdminSetEvent>,
+        upgrade_events: EventHandle<UpgradeEvent>
     }
 
     /// Error codes
@@ -61,6 +73,7 @@ module keyring::core_v2 {
     const EBLACKLISTED: u64 = 5;
     const EINVALID_KEY: u64 = 6;
     const EINVALID_KEY_REGISTRATION: u64 = 7;
+    const EINVALID_UPGRADE: u64 = 8;
 
     /// Calculate key hash using SHA3-256 (closest to Solidity's keccak256)
     fun get_key_hash(key: &vector<u8>): vector<u8> {
@@ -80,13 +93,17 @@ module keyring::core_v2 {
         exp: u64
     }
 
-    struct AdminCap has key, store {}
+    struct AdminCap has key, store {
+        version: u64
+    }
 
     /// Initialize module
     fun init_module(admin: &signer) {
         let admin_addr = signer::address_of(admin);
-        // Create admin capability
-        move_to(admin, AdminCap {});
+        // Create admin capability with initial version
+        move_to(admin, AdminCap {
+            version: VERSION
+        });
         // Initialize event store
         move_to(admin, EventStore {
             key_registered_events: event::new_event_handle<KeyRegisteredEvent>(admin),
@@ -94,7 +111,8 @@ module keyring::core_v2 {
             credential_created_events: event::new_event_handle<CredentialCreatedEvent>(admin),
             entity_blacklisted_events: event::new_event_handle<EntityBlacklistedEvent>(admin),
             entity_unblacklisted_events: event::new_event_handle<EntityUnblacklistedEvent>(admin),
-            admin_set_events: event::new_event_handle<AdminSetEvent>(admin)
+            admin_set_events: event::new_event_handle<AdminSetEvent>(admin),
+            upgrade_events: event::new_event_handle<UpgradeEvent>(admin)
         });
         // Emit initial admin set event
         let events = borrow_global_mut<EventStore>(admin_addr);
@@ -317,5 +335,43 @@ module keyring::core_v2 {
         // Transfer APT coins
         let admin_addr = signer::address_of(admin);
         coin::transfer<AptosCoin>(admin, to, amount);
+    }
+
+    /// Upgrade the module
+    public entry fun upgrade(
+        admin: &signer,
+        metadata: vector<u8>
+    ) acquires AdminCap {
+        // Verify admin capability
+        let admin_addr = signer::address_of(admin);
+        assert!(exists<AdminCap>(admin_addr), error::permission_denied(EINVALID_SIGNER));
+
+        // Get current version
+        let admin_cap = borrow_global_mut<AdminCap>(admin_addr);
+        let current_version = admin_cap.version;
+
+        // Verify upgrade version is newer
+        let package = std::string::utf8(metadata);
+        let new_version = VERSION;
+        assert!(new_version > current_version, error::invalid_argument(EINVALID_UPGRADE));
+
+        // Perform upgrade
+        code::request_publish(
+            admin,
+            metadata,
+            vector::empty<vector<u8>>() // No dependencies
+        );
+
+        // Update version and emit event
+        let old_version = admin_cap.version;
+        admin_cap.version = new_version;
+
+        // Emit upgrade event
+        let events = borrow_global_mut<EventStore>(admin_addr);
+        event::emit_event(&mut events.upgrade_events, UpgradeEvent {
+            old_version,
+            new_version,
+            metadata
+        });
     }
 }
