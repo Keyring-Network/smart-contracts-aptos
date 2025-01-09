@@ -229,51 +229,44 @@ module keyring::rsa_verify {
         let current_result = result;
         let exp_len = vector::length(exp_limbs);
         
-        // Precompute base powers for 4-bit window
+        // Use smaller window size (2 bits) for better performance
         let powers = vector::empty<vector<u64>>();
         let base_copy = vector::empty<u64>();
         let i = 0;
         let len = vector::length(base_mont);
         while (i < len) {
-            let element = *vector::borrow(base_mont, i);
-            vector::push_back(&mut base_copy, element);
+            vector::push_back(&mut base_copy, *vector::borrow(base_mont, i));
             i = i + 1;
         };
         vector::push_back(&mut powers, base_copy);  // base^1
-        let i = 1;
-        while (i < 16) {
-            let prev = vector::borrow(&powers, i - 1);
-            let next = montgomery_multiply(prev, base_mont, mod_limbs, n0_inv);
-            vector::push_back(&mut powers, next);
-            i = i + 1;
-        };
         
-        // Process 4 bits at a time from most significant to least
+        // Only precompute 4 values (2-bit window)
+        let next = montgomery_multiply(&base_copy, base_mont, mod_limbs, n0_inv);
+        vector::push_back(&mut powers, next);
+        let next = montgomery_multiply(&next, base_mont, mod_limbs, n0_inv);
+        vector::push_back(&mut powers, next);
+        
+        // Process 2 bits at a time from most significant to least
         let limb_idx = exp_len;
         while (limb_idx > 0) {
             limb_idx = limb_idx - 1;
             let exp_word = *vector::borrow(exp_limbs, limb_idx);
-            let bit_pos = 60;  // Process 4 bits at a time
+            let mut_pos = 62;  // Process 2 bits at a time
             
-            // Process each 4-bit window in the current word
-            let mut_pos = bit_pos;
-            while (mut_pos >= 0 && mut_pos <= 60) {
-                // Square 4 times
-                let j = 0;
-                while (j < 4) {
-                    current_result = montgomery_multiply(&current_result, &current_result, mod_limbs, n0_inv);
-                    j = j + 1;
-                };
+            while (mut_pos >= 0 && mut_pos < 64) {
+                // Square twice
+                current_result = montgomery_multiply(&current_result, &current_result, mod_limbs, n0_inv);
+                current_result = montgomery_multiply(&current_result, &current_result, mod_limbs, n0_inv);
                 
-                // Extract 4-bit window
-                let window = ((exp_word >> mut_pos) & 0xF) as u64;
+                // Extract 2-bit window
+                let window = ((exp_word >> mut_pos) & 0x3) as u64;
                 if (window != 0) {
                     let power = vector::borrow(&powers, (window - 1) as u64);
                     current_result = montgomery_multiply(&current_result, power, mod_limbs, n0_inv);
                 };
                 
                 if (mut_pos == 0) { break };
-                mut_pos = mut_pos - 4;
+                mut_pos = mut_pos - 2;
             };
         };
         
