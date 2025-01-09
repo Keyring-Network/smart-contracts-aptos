@@ -18,6 +18,17 @@ module keyring::rsa_message_packing {
     const MAX_VALID_TIME: u64 = 0xFFFFFFFF; // 32 bits
     const MAX_COST: u128 = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF; // 128 bits
 
+    /// Helper function to calculate power
+    fun pow(base: u128, exp: u64): u128 {
+        let result = 1u128;
+        let i = 0;
+        while (i < exp) {
+            result = result * base;
+            i = i + 1;
+        };
+        result
+    }
+
     /// Pack auth message into bytes
     /// @param trading_address: The trading address (20 bytes)
     /// @param policy_id: The policy ID (24 bits)
@@ -89,30 +100,25 @@ module keyring::rsa_message_packing {
         vector::push_back(&mut result, (valid_until & 0xFF) as u8);
         
         // Add cost (20 bytes = 160 bits)
-        // First add padding bytes (all zeros for the high bits)
-        let i = 19;
-        while (i >= 16) {
-            vector::push_back(&mut result, 0u8);
-            i = i - 1;
-        };
-        
-        // Then add the actual 128-bit value bytes
-        let remaining = cost;
-        let mut i = 15;
-        let mut power = 15;
-        while (i >= 0) {
-            let divisor = 256u128;
-            let mut value = remaining;
-            let mut p = power;
-            while (p > 0) {
-                value = value / divisor;
-                p = p - 1;
+        // First add padding bytes (zeros for high bits)
+        {
+            let padding_i = 19;
+            while (padding_i >= 16) {
+                vector::push_back(&mut result, 0u8);
+                padding_i = padding_i - 1;
             };
-            let byte = (value % divisor) as u8;
-            vector::push_back(&mut result, byte);
-            if (i == 0) { break };
-            i = i - 1;
-            power = power - 1;
+        };
+
+        // Add actual 128-bit value bytes
+        {
+            let value_i = 15;
+            let divisor = 256u128;
+            while (value_i >= 0) {
+                let power = pow(divisor, (value_i as u64));
+                let byte = ((cost / power) % divisor) as u8;
+                vector::push_back(&mut result, byte);
+                value_i = value_i - 1;
+            };
         };
         
         // Add backdoor data
@@ -121,16 +127,5 @@ module keyring::rsa_message_packing {
         result
     }
 
-    /// Helper function to extract bytes from a u128 value
-    fun extract_bytes(value: u128, index: u64, result: &mut vector<u8>) {
-        if (index == 0) {
-            vector::push_back(result, (value & 0xFFu128) as u8);
-            return
-        };
-        
-        let divisor = 256u128;
-        let byte = (value % divisor) as u8;
-        extract_bytes(value / divisor, index - 1, result);
-        vector::push_back(result, byte);
-    }
+    // End of module
 }
