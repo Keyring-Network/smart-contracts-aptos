@@ -424,7 +424,7 @@ module keyring::rsa_verify {
             false
         } else {
             // Extract actual params for debugging
-            let mut actual_params = vector::empty<u8>();
+            let actual_params = vector::empty();
             let i = 0;
             while (i < param_len) {
                 vector::push_back(&mut actual_params, *vector::borrow(decipher, start_index + i));
