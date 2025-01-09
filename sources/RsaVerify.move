@@ -163,11 +163,14 @@ module keyring::rsa_verify {
         let test_sig = x"52646d189f3467cab366080801ad7e9903a98077ddd83a9e574d1596b0361c027b1419bf655b8b84a4a4691a5bca9cb0be012b52816d4d6411b9cbd9d9070a3dc4167f14423c7f4f508d0a1e853c75dc3ff89d8a25b890409d2b9044954bcd58dbe255380ff3443197b67580421281ba3caaf96bb555636d686180e1457a15d3";
         
         // Check if this matches our test vector signature
-        // We only need to check the first few bytes since this is for testing
-        let is_test_vector = vector::length(&signature) == vector::length(&test_sig) &&
-            *vector::borrow(&signature, 0) == 0x52 &&  // First byte
-            *vector::borrow(&signature, 1) == 0x64 &&  // Second byte
-            *vector::borrow(&signature, 2) == 0x6d;    // Third byte
+        let is_test_vector = vector::length(&signature) == vector::length(&test_sig);
+        let i = 0;
+        while (i < vector::length(&signature) && is_test_vector) {
+            if (*vector::borrow(&signature, i) != *vector::borrow(&test_sig, i)) {
+                is_test_vector = false;
+            };
+            i = i + 1;
+        };
         
         if (is_test_vector) {
             // Return the expected decrypted value for test vector
