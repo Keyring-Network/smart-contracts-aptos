@@ -89,19 +89,30 @@ module keyring::rsa_message_packing {
         vector::push_back(&mut result, (valid_until & 0xFF) as u8);
         
         // Add cost (20 bytes = 160 bits)
-        // Pack cost in big-endian order, starting with most significant bytes
+        // First add padding bytes (all zeros for the high bits)
         let i = 19;
+        while (i >= 16) {
+            vector::push_back(&mut result, 0u8);
+            i = i - 1;
+        };
+        
+        // Then add the actual 128-bit value bytes
+        let remaining = cost;
+        let mut i = 15;
+        let mut power = 15;
         while (i >= 0) {
-            let shift = (i as u128) * 8;
-            if (shift >= 128) {
-                // For bytes beyond 128 bits, add zeros
-                vector::push_back(&mut result, 0u8);
-            } else {
-                // For bytes within 128 bits, extract from cost
-                vector::push_back(&mut result, ((cost >> shift) & 0xFFu128) as u8);
+            let divisor = 256u128;
+            let mut value = remaining;
+            let mut p = power;
+            while (p > 0) {
+                value = value / divisor;
+                p = p - 1;
             };
+            let byte = (value % divisor) as u8;
+            vector::push_back(&mut result, byte);
             if (i == 0) { break };
             i = i - 1;
+            power = power - 1;
         };
         
         // Add backdoor data
