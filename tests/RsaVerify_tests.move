@@ -1,9 +1,9 @@
 #[test_only]
 module keyring::rsa_verify_tests {
     use std::vector;
+    use std::debug;
     use keyring::rsa_verify;
     use keyring::rsa_message_packing;
-    use aptos_framework::aptos_std::test;
 
     // Test vector constants
     struct TestVector has copy, drop {
@@ -51,62 +51,123 @@ module keyring::rsa_verify_tests {
     // Standard RSA exponent e=65537
     const RSA_E: vector<u8> = x"010001";
 
-    fun verify_test_vector(vector: TestVector): bool {
+    fun verify_test_vector(test_data: TestVector): bool {
+        let TestVector {
+            trading_address,
+            policy_id,
+            create_before,
+            valid_until,
+            cost,
+            backdoor,
+            key: key_bytes,
+            signature,
+            expected: _
+        } = test_data;
+
         // Create RSA key
-        let key = rsa_verify::create_key(RSA_E, vector.key);
+        let key = rsa_verify::create_key(RSA_E, key_bytes);
 
         // Pack message data
         let message = rsa_message_packing::pack_auth_message(
-            vector.trading_address,
-            vector.policy_id,
-            vector.create_before,
-            vector.valid_until,
-            vector.cost,
-            vector.backdoor
+            trading_address,
+            policy_id,
+            create_before,
+            valid_until,
+            cost,
+            backdoor
         );
 
         // Verify signature
-        rsa_verify::verify_auth_message(message, vector.signature, key)
+        rsa_verify::verify_auth_message(message, signature, key)
     }
 
     #[test]
     public fun test_verify_auth_message_vector_1() {
-        let vector = test_vector_1();
-        let result = verify_test_vector(vector);
-        test::assert(result == vector.expected, 1);
+        let test_data = test_vector_1();
+        let TestVector {
+            trading_address: _,
+            policy_id: _,
+            create_before: _,
+            valid_until: _,
+            cost: _,
+            backdoor: _,
+            key: _,
+            signature: _,
+            expected
+        } = copy test_data;
+        let result = verify_test_vector(test_data);
+        // Print debug info for message packing
+        // Print debug info for message packing
+        std::debug::print(&b"=== Test Vector 1 Debug Info ===");
+        std::debug::print(&b"Result:");
+        std::debug::print(&result);
+        std::debug::print(&b"Expected:");
+        std::debug::print(&expected);
+        
+        // Print the packed message components for debugging
+        let message = rsa_message_packing::pack_auth_message(
+            TRADING_ADDRESS,
+            POLICY_ID,
+            CREATE_BEFORE,
+            VALID_UNTIL,
+            COST,
+            BACKDOOR_HEX
+        );
+        std::debug::print(&b"Packed message bytes:");
+        std::debug::print(&message);
+        assert!(result == expected, 0);
     }
 
     #[test]
     public fun test_verify_auth_message_vector_2() {
-        let vector = test_vector_2();
-        let result = verify_test_vector(vector);
-        test::assert(result == vector.expected, 2);
+        let test_data = test_vector_2();
+        let TestVector {
+            trading_address: _,
+            policy_id: _,
+            create_before: _,
+            valid_until: _,
+            cost: _,
+            backdoor: _,
+            key: _,
+            signature: _,
+            expected
+        } = copy test_data;
+        let result = verify_test_vector(test_data);
+        assert!(result == expected, 0);
     }
 
     #[test]
     public fun test_verify_auth_message_invalid_signature() {
-        let vector = test_vector_1();
+        let TestVector {
+            trading_address,
+            policy_id,
+            create_before,
+            valid_until,
+            cost,
+            backdoor,
+            key: key_bytes,
+            signature,
+            expected: _
+        } = test_vector_1();
         
-        // Modify one byte of signature to make it invalid
-        let mut invalid_sig = vector.signature;
+        // Create invalid signature by modifying one byte
+        let invalid_sig = copy signature;
         let first_byte = vector::borrow_mut(&mut invalid_sig, 0);
         *first_byte = *first_byte ^ 0xFF;
 
-        // Create RSA key
-        let key = rsa_verify::create_key(RSA_E, vector.key);
-
-        // Pack message data
+        // Create key and pack message
+        let key = rsa_verify::create_key(RSA_E, key_bytes);
         let message = rsa_message_packing::pack_auth_message(
-            vector.trading_address,
-            vector.policy_id,
-            vector.create_before,
-            vector.valid_until,
-            vector.cost,
-            vector.backdoor
+            trading_address,
+            policy_id,
+            create_before,
+            valid_until,
+            cost,
+            backdoor
         );
 
         // Verify signature should fail
         let result = rsa_verify::verify_auth_message(message, invalid_sig, key);
-        test::assert(result == false, 2);
+        assert!(result == false, 0);
     }
 }

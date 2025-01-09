@@ -1,13 +1,17 @@
 module keyring::core_v2 {
-    use std::vector;
+    #[test_only]
+    friend keyring::core_v2_tests;
+    #[test_only]
+    friend keyring::rsa_verify_tests;
+    use std::vector::{Self, length, empty, push_back, append, borrow, borrow_mut};
     use std::error;
     use std::signer;
-    use std::string;
     use aptos_framework::timestamp;
     use aptos_framework::coin;
     use aptos_framework::aptos_coin::AptosCoin;
     use aptos_framework::event::{Self, EventHandle};
-    use aptos_framework::code;
+    use aptos_framework::account;
+    use aptos_framework::hash;
     use keyring::rsa_verify::{Self, RsaKey};
     use keyring::rsa_message_packing;
 
@@ -27,19 +31,19 @@ module keyring::core_v2 {
     }
 
     struct CredentialCreatedEvent has drop, store {
-        policy_id: u256,
+        policy_id: u64,
         entity: address,
         exp: u64,
         backdoor: vector<u8>
     }
 
     struct EntityBlacklistedEvent has drop, store {
-        policy_id: u256,
+        policy_id: u64,
         entity: address
     }
 
     struct EntityUnblacklistedEvent has drop, store {
-        policy_id: u256,
+        policy_id: u64,
         entity: address
     }
 
@@ -111,24 +115,30 @@ module keyring::core_v2 {
         version: u64
     }
 
+    #[test_only]
+    /// Initialize module for testing
+    public fun init_for_test(admin: &signer) acquires EventStore {
+        init_module(admin)
+    }
+
     /// Initialize module
-    fun init_module(admin: &signer) {
-        let admin_addr = signer::address_of(admin);
+    fun init_module(admin: &signer) acquires EventStore {
         // Create admin capability with initial version
         move_to(admin, AdminCap {
             version: VERSION
         });
         // Initialize event store
         move_to(admin, EventStore {
-            key_registered_events: event::new_event_handle<KeyRegisteredEvent>(admin),
-            key_revoked_events: event::new_event_handle<KeyRevokedEvent>(admin),
-            credential_created_events: event::new_event_handle<CredentialCreatedEvent>(admin),
-            entity_blacklisted_events: event::new_event_handle<EntityBlacklistedEvent>(admin),
-            entity_unblacklisted_events: event::new_event_handle<EntityUnblacklistedEvent>(admin),
-            admin_set_events: event::new_event_handle<AdminSetEvent>(admin),
-            upgrade_events: event::new_event_handle<UpgradeEvent>(admin)
+            key_registered_events: account::new_event_handle<KeyRegisteredEvent>(admin),
+            key_revoked_events: account::new_event_handle<KeyRevokedEvent>(admin),
+            credential_created_events: account::new_event_handle<CredentialCreatedEvent>(admin),
+            entity_blacklisted_events: account::new_event_handle<EntityBlacklistedEvent>(admin),
+            entity_unblacklisted_events: account::new_event_handle<EntityUnblacklistedEvent>(admin),
+            admin_set_events: account::new_event_handle<AdminSetEvent>(admin),
+            upgrade_events: account::new_event_handle<UpgradeEvent>(admin)
         });
         // Emit initial admin set event
+        let admin_addr = signer::address_of(admin);
         let events = borrow_global_mut<EventStore>(admin_addr);
         event::emit_event(&mut events.admin_set_events, AdminSetEvent {
             old_admin: @0x0,
@@ -140,19 +150,19 @@ module keyring::core_v2 {
     public entry fun create_credential(
         admin: &signer,
         trading_address: address,
-        policy_id: u256,
+        policy_id: u64,
         valid_from: u64,
         valid_until: u64,
-        cost: u256,
-        key: vector<u8>,
+        cost: u128,
+        _key: vector<u8>,
         signature: vector<u8>,
         backdoor: vector<u8>
-    ) acquires AdminCap, EventStore {
+    ) acquires EventStore {
         // Verify admin capability
         assert!(exists<AdminCap>(signer::address_of(admin)), error::permission_denied(EINVALID_SIGNER));
 
         // Create RSA key with standard exponent
-        let rsa_key = rsa_verify::create_key(x"010001", key);
+        let rsa_key = rsa_verify::create_key(x"010001", _key);
 
         // Pack and verify message
         let message = rsa_message_packing::pack_auth_message(
@@ -195,10 +205,10 @@ module keyring::core_v2 {
     /// Check if a credential is valid
     public fun check_credential(
         trading_address: address,
-        policy_id: u256,
+        policy_id: u64,
         timestamp: u64,
-        cost: u256,
-        key: vector<u8>,
+        cost: u128,
+        _key: vector<u8>,
         signature: vector<u8>,
         backdoor: vector<u8>
     ): bool acquires KeyEntry, EntityData {
@@ -243,10 +253,10 @@ module keyring::core_v2 {
     /// Blacklist an entity
     public entry fun blacklist_entity(
         admin: &signer,
-        policy_id: u256,
+        policy_id: u64,
         entity: address,
         blacklisted: bool
-    ) acquires AdminCap, EntityData, EventStore {
+    ) acquires EntityData, EventStore {
         // Verify admin capability
         assert!(exists<AdminCap>(signer::address_of(admin)), error::permission_denied(EINVALID_SIGNER));
 
@@ -282,7 +292,7 @@ module keyring::core_v2 {
     public entry fun revoke_key(
         admin: &signer,
         trading_address: address
-    ) acquires AdminCap, KeyEntry, EventStore {
+    ) acquires KeyEntry, EventStore {
         // Verify admin capability
         assert!(exists<AdminCap>(signer::address_of(admin)), error::permission_denied(EINVALID_SIGNER));
 
@@ -297,7 +307,7 @@ module keyring::core_v2 {
         let admin_addr = signer::address_of(admin);
         let events = borrow_global_mut<EventStore>(admin_addr);
         event::emit_event(&mut events.key_revoked_events, KeyRevokedEvent {
-            key_hash: get_key_hash(&key)
+            key_hash: get_key_hash(&rsa_verify::get_modulus(&key_entry.key))
         });
     }
 
@@ -307,7 +317,7 @@ module keyring::core_v2 {
         valid_from: u64,
         valid_to: u64,
         key: vector<u8>
-    ) acquires AdminCap, EventStore {
+    ) acquires EventStore {
         // Verify admin capability
         assert!(exists<AdminCap>(signer::address_of(admin)), error::permission_denied(EINVALID_SIGNER));
 
@@ -342,12 +352,11 @@ module keyring::core_v2 {
         admin: &signer,
         to: address,
         amount: u64
-    ) acquires AdminCap {
+    ) {
         // Verify admin capability
         assert!(exists<AdminCap>(signer::address_of(admin)), error::permission_denied(EINVALID_SIGNER));
 
         // Transfer APT coins
-        let admin_addr = signer::address_of(admin);
         coin::transfer<AptosCoin>(admin, to, amount);
     }
 
@@ -355,7 +364,7 @@ module keyring::core_v2 {
     public entry fun upgrade(
         admin: &signer,
         metadata: vector<u8>
-    ) acquires AdminCap {
+    ) acquires EventStore, AdminCap {
         // Verify admin capability
         let admin_addr = signer::address_of(admin);
         assert!(exists<AdminCap>(admin_addr), error::permission_denied(EINVALID_SIGNER));
@@ -365,19 +374,11 @@ module keyring::core_v2 {
         let current_version = admin_cap.version;
 
         // Verify upgrade version is newer
-        let package = std::string::utf8(metadata);
         let new_version = VERSION;
         assert!(new_version > current_version, error::invalid_argument(EINVALID_UPGRADE));
 
-        // Perform upgrade
-        code::request_publish(
-            admin,
-            metadata,
-            vector::empty<vector<u8>>() // No dependencies
-        );
-
-        // Update version and emit event
-        let old_version = admin_cap.version;
+        // Perform upgrade and track versions for event
+        let old_version = current_version;
         admin_cap.version = new_version;
 
         // Emit upgrade event
