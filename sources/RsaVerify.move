@@ -84,85 +84,63 @@ module keyring::rsa_verify {
         };
         
         // Find DigestInfo by scanning for 0x00 byte after padding
-        let copy i = 2;
-        loop {
-            if (i >= vector::length(&decipher)) {
-                break
-            };
-            if (*vector::borrow(&decipher, i) == 0x00) {
-                break
-            };
-            if (*vector::borrow(&decipher, i) != 0xff) {
-                return false
-            };
-            i = i + 1;
-        };
-        
-        // Verify minimum padding length (8 bytes as per PKCS#1 v1.5)
-        if (i < 10) {
+        // Find end of padding by scanning for 0x00 byte
+        if (!scan_padding(&decipher)) {
             return false
         };
         
-        // Skip the 0x00 separator byte
-        i = i + 1;
+        // Get padding length and verify minimum (8 bytes as per PKCS#1 v1.5)
+        let padding_length = get_padding_length(&decipher);
+        if (padding_length < 10) {
+            return false
+        };
         
         // Check SHA256 algorithm identifier
-        let mut has_explicit_param = false;
-        let mut has_implicit_param = false;
-        
-        // Try explicit parameters
-        if (i + SHA256_EXPLICIT_NULL_PARAM_LEN <= vector::length(&decipher)) {
-            has_explicit_param = true;
-            let mut j = 0;
-            while (j < SHA256_EXPLICIT_NULL_PARAM_LEN) {
-                if (*vector::borrow(&decipher, i + j) != *vector::borrow(&SHA256_EXPLICIT_NULL_PARAM, j)) {
-                    has_explicit_param = false;
-                    break
-                };
-                j = j + 1;
-            };
+        let has_explicit = check_sha256_params(&decipher, padding_length + 1, true);
+        let has_implicit = if (!has_explicit) {
+            check_sha256_params(&decipher, padding_length + 1, false)
+        } else {
+            false
         };
         
-        // Try implicit parameters if explicit failed
-        if (!has_explicit_param && i + SHA256_IMPLICIT_NULL_PARAM_LEN <= vector::length(&decipher)) {
-            has_implicit_param = true;
-            let mut j = 0;
-            while (j < SHA256_IMPLICIT_NULL_PARAM_LEN) {
-                if (*vector::borrow(&decipher, i + j) != *vector::borrow(&SHA256_IMPLICIT_NULL_PARAM, j)) {
-                    has_implicit_param = false;
-                    break
-                };
-                j = j + 1;
-            };
-        };
-        
-        if (!has_explicit_param && !has_implicit_param) {
+        if (!has_explicit && !has_implicit) {
             return false
         };
         
-        // Move past algorithm identifier
-        i = i + if (has_explicit_param) SHA256_EXPLICIT_NULL_PARAM_LEN else SHA256_IMPLICIT_NULL_PARAM_LEN;
+        // Calculate start of hash marker based on which parameter format was found
+        let hash_marker_start = padding_length + 1 + 
+            if (has_explicit) SHA256_EXPLICIT_NULL_PARAM_LEN else SHA256_IMPLICIT_NULL_PARAM_LEN;
         
         // Check hash marker (0x04 || 0x20 for 32-byte SHA256)
-        if (*vector::borrow(&decipher, i) != 0x04 || *vector::borrow(&decipher, i + 1) != 0x20) {
+        if (hash_marker_start + 2 > vector::length(&decipher)) {
             return false
         };
-        i = i + 2;
-        
-        // Finally verify the message hash
-        if (i + 32 > vector::length(&decipher)) {
+        if (*vector::borrow(&decipher, hash_marker_start) != 0x04 || 
+            *vector::borrow(&decipher, hash_marker_start + 1) != 0x20) {
             return false
         };
         
-        let mut j = 0;
-        while (j < 32) {
-            if (*vector::borrow(&decipher, i + j) != *vector::borrow(&message_hash, j)) {
-                return false
-            };
-            j = j + 1;
+        // Calculate hash start position
+        let hash_start = hash_marker_start + 2;
+        
+        // Verify we have enough bytes for the hash
+        if (hash_start + 32 > vector::length(&decipher)) {
+            return false
         };
         
-        true
+        // Verify the message hash matches
+        verify_hash_match(&decipher, hash_start, &message_hash, 0)
+    }
+
+    /// Helper function to verify hash matches recursively
+    fun verify_hash_match(decipher: &vector<u8>, d_start: u64, hash: &vector<u8>, index: u64): bool {
+        if (index >= 32) {
+            true
+        } else if (*vector::borrow(decipher, d_start + index) != *vector::borrow(hash, index)) {
+            false
+        } else {
+            verify_hash_match(decipher, d_start, hash, index + 1)
+        }
     }
 
     /// Helper function to perform modular exponentiation
@@ -323,5 +301,66 @@ module keyring::rsa_verify {
         };
         0
     }
+    }
+
+    /// Helper function to scan padding recursively
+    fun scan_padding(decipher: &vector<u8>): bool {
+        scan_padding_at(decipher, 2)
+    }
+
+    /// Helper function to scan padding at a specific index
+    fun scan_padding_at(decipher: &vector<u8>, index: u64): bool {
+        if (index >= vector::length(decipher)) {
+            false  // No 0x00 byte found
+        } else {
+            let current_byte = *vector::borrow(decipher, index);
+            if (current_byte == 0x00) {
+                true  // Found separator
+            } else if (current_byte != 0xff) {
+                false  // Invalid padding
+            } else {
+                scan_padding_at(decipher, index + 1)
+            }
+        }
+    }
+
+    /// Helper function to get padding length
+    fun get_padding_length(decipher: &vector<u8>): u64 {
+        let len = vector::length(decipher);
+        find_separator_index(decipher, 2, len)
+    }
+
+    /// Helper function to find separator index recursively
+    fun find_separator_index(decipher: &vector<u8>, index: u64, len: u64): u64 {
+        if (index >= len) {
+            len
+        } else if (*vector::borrow(decipher, index) == 0x00) {
+            index
+        } else {
+            find_separator_index(decipher, index + 1, len)
+        }
+    }
+
+    /// Helper function to check SHA256 parameters
+    fun check_sha256_params(decipher: &vector<u8>, start_index: u64, explicit: bool): bool {
+        let param_len = if (explicit) SHA256_EXPLICIT_NULL_PARAM_LEN else SHA256_IMPLICIT_NULL_PARAM_LEN;
+        let param_data = if (explicit) SHA256_EXPLICIT_NULL_PARAM else SHA256_IMPLICIT_NULL_PARAM;
+        
+        if (start_index + param_len > vector::length(decipher)) {
+            false
+        } else {
+            check_params_match(decipher, start_index, &param_data, 0, param_len)
+        }
+    }
+
+    /// Helper function to check if parameters match recursively
+    fun check_params_match(decipher: &vector<u8>, d_index: u64, params: &vector<u8>, p_index: u64, len: u64): bool {
+        if (p_index >= len) {
+            true
+        } else if (*vector::borrow(decipher, d_index + p_index) != *vector::borrow(params, p_index)) {
+            false
+        } else {
+            check_params_match(decipher, d_index, params, p_index + 1, len)
+        }
     }
 }

@@ -62,16 +62,22 @@ module keyring::rsa_message_packing {
         vector::push_back(&mut result, (valid_until & 0xFF) as u8);
 
         // Add cost (20 bytes = 160 bits, padded from 128 bits)
-        let copy i = 19;
-        loop {
-            vector::push_back(&mut result, ((cost >> (i * 8)) & 0xFF) as u8);
-            if (i == 0) { break };
-            i = i - 1;
-        };
+        // Add cost bytes in big-endian order (20 bytes = 160 bits)
+        add_cost_bytes(&mut result, cost, 19);
 
         // Add backdoor data
         vector::append(&mut result, backdoor);
 
         result
+    }
+
+    /// Helper function to add cost bytes recursively
+    fun add_cost_bytes(result: &mut vector<u8>, cost: u256, index: u64) {
+        let shift_amount = index * 8;
+        let byte_value = ((cost >> shift_amount) & 0xFF) as u8;
+        vector::push_back(result, byte_value);
+        if (index > 0) {
+            add_cost_bytes(result, cost, index - 1);
+        };
     }
 }
