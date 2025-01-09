@@ -422,6 +422,9 @@ module keyring::rsa_verify {
         let len = vector::length(n);
         let t = vector::empty<u64>();
         
+        std::debug::print(&b"Starting Montgomery multiplication");
+        std::debug::print(&len);
+        
         // Pre-allocate result vector
         let i = 0;
         while (i < len + 1) {
@@ -429,30 +432,45 @@ module keyring::rsa_verify {
             i = i + 1;
         };
         
-        // Process one word at a time
+        // Process one word at a time with iteration limit
+        let max_iterations = len * len * 2; // Reasonable upper bound
+        let mut total_iterations = 0;
         let i = 0;
+        
         while (i < len) {
+            if (total_iterations > max_iterations) {
+                std::debug::print(&b"Montgomery multiplication timeout");
+                return t
+            };
+            
             let a_i = *vector::borrow(a, i);
             let carry = 0u64;
+            
+            // Skip multiplication if a_i is zero
+            if (a_i == 0) {
+                i = i + 1;
+                continue
+            };
             
             // Optimized multiply-accumulate loop
             let j = 0;
             while (j < len) {
+                total_iterations = total_iterations + 1;
                 let b_j = *vector::borrow(b, j);
+                
+                // Skip multiplication if b_j is zero
+                if (b_j == 0) {
+                    j = j + 1;
+                    continue
+                };
+                
                 let t_j = *vector::borrow(&t, j);
                 
-                // Optimized multiply-add using native arithmetic
-                let a_128 = ((a_i as u128) & 0xFFFFFFFFFFFFFFFFu128);
-                let b_128 = ((b_j as u128) & 0xFFFFFFFFFFFFFFFFu128);
-                let t_128 = ((t_j as u128) & 0xFFFFFFFFFFFFFFFFu128);
-                let c_128 = ((carry as u128) & 0xFFFFFFFFFFFFFFFFu128);
-                let product = a_128 * b_128;
-                let sum = product + t_128 + c_128;
-                let mask = 0xFFFFFFFFFFFFFFFFu128;
-                let low_bits = sum & mask;
-                let high_bits = sum >> 64;
-                *vector::borrow_mut(&mut t, j) = ((low_bits & mask) as u64);
-                carry = ((high_bits & mask) as u64);
+                // Direct multiply-add using u128
+                let product = ((a_i as u128) * (b_j as u128));
+                let sum = product + (t_j as u128) + (carry as u128);
+                *vector::borrow_mut(&mut t, j) = ((sum & 0xFFFFFFFFFFFFFFFFu128) as u64);
+                carry = ((sum >> 64) as u64);
                 j = j + 1;
             };
             
@@ -460,41 +478,44 @@ module keyring::rsa_verify {
             *vector::borrow_mut(&mut t, len) = carry;
             
             // Optimized reduction step
-            let m = (*vector::borrow(&t, 0) * n0_inv) & ((1u64 << 64) - 1);
-            let borrow = 0u64;
+            let m = (*vector::borrow(&t, 0) * n0_inv) & 0xFFFFFFFFFFFFFFFFu64;
+            let mut borrow = 0u64;
             
             // Combined multiply-subtract loop
             let j = 0;
             while (j < len) {
+                total_iterations = total_iterations + 1;
                 let n_j = *vector::borrow(n, j);
+                
+                // Skip multiplication if m or n_j is zero
+                if (m == 0 || n_j == 0) {
+                    j = j + 1;
+                    continue
+                };
+                
                 let t_j = *vector::borrow(&t, j);
                 
-                // Optimized multiply-subtract using native arithmetic
-                let m_128 = ((m as u128) & 0xFFFFFFFFFFFFFFFFu128);
-                let n_128 = ((n_j as u128) & 0xFFFFFFFFFFFFFFFFu128);
-                let t_128 = ((t_j as u128) & 0xFFFFFFFFFFFFFFFFu128);
-                let b_128 = ((borrow as u128) & 0xFFFFFFFFFFFFFFFFu128);
-                let product = m_128 * n_128;
-                let max_val = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFu128;
-                let sub = t_128 + max_val - product - b_128;
-                let mask = 0xFFFFFFFFFFFFFFFFu128;
-                let low_bits = sub & mask;
-                *vector::borrow_mut(&mut t, j) = ((low_bits & mask) as u64);
-                borrow = if (sub >= max_val) { 0u64 } else { 1u64 };
+                // Direct multiply-subtract
+                let product = (m as u128) * (n_j as u128);
+                let sub = (t_j as u128) + (0xFFFFFFFFFFFFFFFFu128 + 1) - product - (borrow as u128);
+                *vector::borrow_mut(&mut t, j) = (sub as u64);
+                borrow = if (sub > 0xFFFFFFFFFFFFFFFFu128) { 0u64 } else { 1u64 };
                 j = j + 1;
             };
             
-            // Single pass shift with carry propagation
-            let shift_i = 0;
-            while (shift_i < len) {
-                let val = *vector::borrow(&t, shift_i + 1);
-                *vector::borrow_mut(&mut t, shift_i) = val;
-                shift_i = shift_i + 1;
+            // Optimized shift
+            let j = 0;
+            while (j < len) {
+                *vector::borrow_mut(&mut t, j) = *vector::borrow(&t, j + 1);
+                j = j + 1;
             };
             *vector::borrow_mut(&mut t, len) = 0;
             
             i = i + 1;
         };
+        
+        std::debug::print(&b"Montgomery multiplication completed in iterations:");
+        std::debug::print(&total_iterations);
         
         // Final reduction
         if (compare_limbs(&t, n) >= 0) {

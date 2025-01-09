@@ -229,51 +229,44 @@ module keyring::rsa_verify {
         let current_result = result;
         let exp_len = vector::length(exp_limbs);
         
-        // Precompute base powers for 4-bit window
+        // Use smaller window size (2 bits) for better performance
         let powers = vector::empty<vector<u64>>();
         let base_copy = vector::empty<u64>();
         let i = 0;
         let len = vector::length(base_mont);
         while (i < len) {
-            let element = *vector::borrow(base_mont, i);
-            vector::push_back(&mut base_copy, element);
+            vector::push_back(&mut base_copy, *vector::borrow(base_mont, i));
             i = i + 1;
         };
         vector::push_back(&mut powers, base_copy);  // base^1
-        let i = 1;
-        while (i < 16) {
-            let prev = vector::borrow(&powers, i - 1);
-            let next = montgomery_multiply(prev, base_mont, mod_limbs, n0_inv);
-            vector::push_back(&mut powers, next);
-            i = i + 1;
-        };
         
-        // Process 4 bits at a time from most significant to least
+        // Only precompute 4 values (2-bit window)
+        let next = montgomery_multiply(&base_copy, base_mont, mod_limbs, n0_inv);
+        vector::push_back(&mut powers, next);
+        let next = montgomery_multiply(&next, base_mont, mod_limbs, n0_inv);
+        vector::push_back(&mut powers, next);
+        
+        // Process 2 bits at a time from most significant to least
         let limb_idx = exp_len;
         while (limb_idx > 0) {
             limb_idx = limb_idx - 1;
             let exp_word = *vector::borrow(exp_limbs, limb_idx);
-            let bit_pos = 60;  // Process 4 bits at a time
+            let mut_pos = 62;  // Process 2 bits at a time
             
-            // Process each 4-bit window in the current word
-            let mut_pos = bit_pos;
-            while (mut_pos >= 0 && mut_pos <= 60) {
-                // Square 4 times
-                let j = 0;
-                while (j < 4) {
-                    current_result = montgomery_multiply(&current_result, &current_result, mod_limbs, n0_inv);
-                    j = j + 1;
-                };
+            while (mut_pos >= 0 && mut_pos < 64) {
+                // Square twice
+                current_result = montgomery_multiply(&current_result, &current_result, mod_limbs, n0_inv);
+                current_result = montgomery_multiply(&current_result, &current_result, mod_limbs, n0_inv);
                 
-                // Extract 4-bit window
-                let window = ((exp_word >> mut_pos) & 0xF) as u64;
+                // Extract 2-bit window
+                let window = ((exp_word >> mut_pos) & 0x3) as u64;
                 if (window != 0) {
                     let power = vector::borrow(&powers, (window - 1) as u64);
                     current_result = montgomery_multiply(&current_result, power, mod_limbs, n0_inv);
                 };
                 
                 if (mut_pos == 0) { break };
-                mut_pos = mut_pos - 4;
+                mut_pos = mut_pos - 2;
             };
         };
         
@@ -448,11 +441,18 @@ module keyring::rsa_verify {
                 let b_j = *vector::borrow(b, j);
                 let t_j = *vector::borrow(&t, j);
                 
-                // Combined multiply-add with single carry propagation
-                let (hi, lo) = mul_u64(a_i, b_j);
-                let sum = ((lo as u128) + (t_j as u128) + (carry as u128));
-                *vector::borrow_mut(&mut t, j) = (sum & ((1u128 << 64) - 1)) as u64;
-                carry = hi + ((sum >> 64) as u64);
+                // Optimized multiply-add using native arithmetic
+                let a_128 = ((a_i as u128) & 0xFFFFFFFFFFFFFFFFu128);
+                let b_128 = ((b_j as u128) & 0xFFFFFFFFFFFFFFFFu128);
+                let t_128 = ((t_j as u128) & 0xFFFFFFFFFFFFFFFFu128);
+                let c_128 = ((carry as u128) & 0xFFFFFFFFFFFFFFFFu128);
+                let product = a_128 * b_128;
+                let sum = product + t_128 + c_128;
+                let mask = 0xFFFFFFFFFFFFFFFFu128;
+                let low_bits = sum & mask;
+                let high_bits = sum >> 64;
+                *vector::borrow_mut(&mut t, j) = ((low_bits & mask) as u64);
+                carry = ((high_bits & mask) as u64);
                 j = j + 1;
             };
             
@@ -469,10 +469,18 @@ module keyring::rsa_verify {
                 let n_j = *vector::borrow(n, j);
                 let t_j = *vector::borrow(&t, j);
                 
-                let (hi, lo) = mul_u64(m, n_j);
-                let sub = ((t_j as u128) - (lo as u128) - (borrow as u128));
-                *vector::borrow_mut(&mut t, j) = (sub & ((1u128 << 64) - 1)) as u64;
-                borrow = hi + ((sub >> 127) as u64);  // Use sign bit for borrow
+                // Optimized multiply-subtract using native arithmetic
+                let m_128 = ((m as u128) & 0xFFFFFFFFFFFFFFFFu128);
+                let n_128 = ((n_j as u128) & 0xFFFFFFFFFFFFFFFFu128);
+                let t_128 = ((t_j as u128) & 0xFFFFFFFFFFFFFFFFu128);
+                let b_128 = ((borrow as u128) & 0xFFFFFFFFFFFFFFFFu128);
+                let product = m_128 * n_128;
+                let max_val = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFu128;
+                let sub = t_128 + max_val - product - b_128;
+                let mask = 0xFFFFFFFFFFFFFFFFu128;
+                let low_bits = sub & mask;
+                *vector::borrow_mut(&mut t, j) = ((low_bits & mask) as u64);
+                borrow = if (sub >= max_val) { 0u64 } else { 1u64 };
                 j = j + 1;
             };
             
